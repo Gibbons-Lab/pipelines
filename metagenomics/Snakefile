@@ -1,0 +1,108 @@
+import pandas as pd
+
+configfile: "config.yml"
+
+manifest = pd.read_csv(config["manifest"])
+samples = manifest.iloc[:, 1].str.split("_R\\d_001.+$").str[0]
+
+
+rule all:
+    input:
+        config["quantify"] + "{sample}/quant.sf"
+
+rule preprocess:
+    input:
+        config["raw"] + "{sample}_R1_fastq.gz",
+        config["raw"] + "{sample}_R2_fastq.gz"
+    output:
+        config["preprocess"] + "{sample}_R1_fastq.gz",
+        config["preprocess"] + "{sample}_R2_fastq.gz"
+        config["preprocess"] + "{sample}_report.json",
+        config["preprocess"] + "{sample}_report.html"
+    params:
+        "trim_front": 5,
+        "min_length": 15,
+        "quality_threshold": 20
+    threads: 1
+    shell:
+        "fastp -i {input[0]} -I {input[1]} -o {output[0]} -O {output[1]} "
+        "--json {output[2]} --html {output[3]} "
+        "--trim_front {params.trim_front} -l {params.min_length} "
+        "-3 -M {param.quality_threshold} -r {input[0]}"
+
+rule assemble:
+    input:
+        config["preprocess"] + samples + "_R1_fastq.gz",
+        config["preprocess"] + samples + "_R2_fastq.gz"
+    output:
+        config["assembly"] + "final.contigs.fa"
+    params:
+        "forward": ",".join(config["preprocess"] + samples + "_R1_fastq.gz")
+        "reverse": ",".join(config["preprocess"] + samples + "_R2_fastq.gz")
+    threads: 16
+    shell:
+        "megahit -1 {params.forward} -2 {params.reverse} "
+        "-out {output} -t {threads}"
+
+rule align:
+    input:
+        config["preprocess"] + "{sample}_R1_fastq.gz",
+        config["preprocess"] + "{sample}_R2_fastq.gz",
+        config["assembly"] + "final.contigs.fa"
+    output:
+        config["align"] + "{sample}.bam"
+    threads: 16
+    shell:
+        "minimap2 -ax sr -t {threads} {input[3]} {input[0]} {input[1]} | "
+        "samtools sort -@5 -o {output}"
+
+
+rule binning:
+    input:
+        config["assembly"] + "{sample}_assembly/final.contigs.fa",
+        config["align"] + samples + ".bam"
+    output:
+        config["binning"] + "depth.txt"
+    params:
+        "bins": config["binning"]
+    threads: 16
+    run:
+        shell(
+            "jgi_summarize_bam_contig_depths --outputDepth {output} " +
+            " ".join(input[1])
+        )
+        shell(
+            "metabat2 -t {threads} -i input[0] -a {output}"
+            "-o {params.bins}/bin"
+        )
+
+rule annotate:
+    input:
+        config["assembly"] + "final.contigs.fa"
+    output:
+        config["annotated"] + "metagenome.tsv"
+    threads: 16
+    shell:
+        "prokka --outdir {output} --prefix {wildcards.sample} --cpus {threads}"
+
+rule transcript_align:
+    input:
+        config["annotated"] + "metagenome.ffn"
+        config["preprocess"] + "{sample}_R1_fastq.gz",
+        config["preprocess"] + "{sample}_R2_fastq.gz"
+    output:
+        config["txn_align"] + "{sample}.bam"
+    shell:
+        "minimap2 -ax sr -t {threads} {input[0]} {input[1]} {input[2]} | "
+        "samtools sort -@5 -o {output}"
+
+rule quantify:
+    input:
+        config["annotated"] + "metagenome.ffn",
+        config["txn_align"] + "{sample}.bam"
+    output:
+        config["quantify"] + "{sample}/quant.sf"
+    threads: 16
+    shell:
+        "salmon quant -p {threads} -l A -a "
+        "-t {input[0]} {input[1]} -o {output}"

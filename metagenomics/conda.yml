@@ -1,0 +1,10 @@
+name: metagenomics
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - fastp
+  - megahit
+  - minimap2
+  - prokka
