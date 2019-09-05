@@ -1,4 +1,5 @@
 import pandas as pd
+from os import path
 
 configfile: "config.yml"
 
@@ -8,101 +9,150 @@ samples = manifest.iloc[:, 1].str.split("_R\\d_001.+$").str[0]
 
 rule all:
     input:
-        config["quantify"] + "{sample}/quant.sf"
+        config["merge"]
 
 rule preprocess:
     input:
-        config["raw"] + "{sample}_R1_fastq.gz",
-        config["raw"] + "{sample}_R2_fastq.gz"
+        config["raw"] + "{sample}_R1_001.fastq.gz",
+        config["raw"] + "{sample}_R2_001.fastq.gz"
     output:
-        config["preprocess"] + "{sample}_R1_fastq.gz",
-        config["preprocess"] + "{sample}_R2_fastq.gz"
+        config["preprocess"] + "{sample}_R1_001.fastq.gz",
+        config["preprocess"] + "{sample}_R2_001.fastq.gz",
         config["preprocess"] + "{sample}_report.json",
         config["preprocess"] + "{sample}_report.html"
     params:
-        "trim_front": 5,
-        "min_length": 15,
-        "quality_threshold": 20
+        trim_front = 5,
+        min_length = 15,
+        quality_threshold = 20
     threads: 1
     shell:
         "fastp -i {input[0]} -I {input[1]} -o {output[0]} -O {output[1]} "
         "--json {output[2]} --html {output[3]} "
-        "--trim_front {params.trim_front} -l {params.min_length} "
-        "-3 -M {param.quality_threshold} -r {input[0]}"
+        "--trim_front1 {params.trim_front} -l {params.min_length} "
+        "-3 -M {params.quality_threshold} -r {input[0]}"
 
 rule assemble:
     input:
-        config["preprocess"] + samples + "_R1_fastq.gz",
-        config["preprocess"] + samples + "_R2_fastq.gz"
+        config["preprocess"] + samples + "_R1_001.fastq.gz",
+        config["preprocess"] + samples + "_R2_001.fastq.gz"
     output:
         config["assembly"] + "final.contigs.fa"
     params:
-        "forward": ",".join(config["preprocess"] + samples + "_R1_fastq.gz")
-        "reverse": ",".join(config["preprocess"] + samples + "_R2_fastq.gz")
+        forward = ",".join(config["preprocess"] + samples + "_R1_001.fastq.gz"),
+        reverse = ",".join(config["preprocess"] + samples + "_R2_001.fastq.gz"),
+        outdir = config["assembly"]
     threads: 16
     shell:
+        "rm -rf {params.outdir} && "
         "megahit -1 {params.forward} -2 {params.reverse} "
-        "-out {output} -t {threads}"
+        "-o {params.outdir} -t {threads}"
 
-rule align:
+rule assembly_align:
     input:
-        config["preprocess"] + "{sample}_R1_fastq.gz",
-        config["preprocess"] + "{sample}_R2_fastq.gz",
+        config["preprocess"] + "{sample}_R1_001.fastq.gz",
+        config["preprocess"] + "{sample}_R2_001.fastq.gz",
         config["assembly"] + "final.contigs.fa"
     output:
         config["align"] + "{sample}.bam"
     threads: 16
     shell:
-        "minimap2 -ax sr -t {threads} {input[3]} {input[0]} {input[1]} | "
-        "samtools sort -@5 -o {output}"
+        "minimap2 -ax sr -t {threads} {input[2]} {input[0]} {input[1]} | "
+        "samtools sort -@{threads} -o {output}"
 
 
 rule binning:
     input:
-        config["assembly"] + "{sample}_assembly/final.contigs.fa",
+        config["assembly"] + "final.contigs.fa",
         config["align"] + samples + ".bam"
     output:
         config["binning"] + "depth.txt"
     params:
-        "bins": config["binning"]
+        bins = config["binning"]
     threads: 16
     run:
+        if not isinstance(input[1], list):
+            input[1] = [input[1]]
         shell(
             "jgi_summarize_bam_contig_depths --outputDepth {output} " +
             " ".join(input[1])
         )
         shell(
-            "metabat2 -t {threads} -i input[0] -a {output}"
+            "metabat2 -t {threads} -i {input[0]} -a {output} " +
             "-o {params.bins}/bin"
         )
+
+rule checkm:
+    input:
+        config["binning"]
+    output:
+        config["binning"] + "checkm/checkm.txt"
+    threads: 16
+    params:
+        bins = config["binning"],
+        outdir = config["binning"] + "checkm"
+    conda:
+        "checkm.yml"
+    shell:
+        "checkm data setRoot data/checkm && "
+        "checkm lineage_wf -t {threads} -x fa {params.bins} {params.outdir} "
+        "-f {output} --tab_table"
 
 rule annotate:
     input:
         config["assembly"] + "final.contigs.fa"
     output:
-        config["annotated"] + "metagenome.tsv"
+        config["annotate"] + "metagenome.ffn",
+        config["annotate"] + "metagenome.tsv"
+    params:
+        outdir = config["annotate"]
     threads: 16
     shell:
-        "prokka --outdir {output} --prefix {wildcards.sample} --cpus {threads}"
+        "prokka --outdir {params.outdir} --prefix metagenome "
+        "--cpus {threads} --force {input}"
 
 rule transcript_align:
     input:
-        config["annotated"] + "metagenome.ffn"
-        config["preprocess"] + "{sample}_R1_fastq.gz",
-        config["preprocess"] + "{sample}_R2_fastq.gz"
+        config["annotate"] + "metagenome.ffn",
+        config["preprocess"] + "{sample}_R1_001.fastq.gz",
+        config["preprocess"] + "{sample}_R2_001.fastq.gz"
     output:
         config["txn_align"] + "{sample}.bam"
     shell:
-        "minimap2 -ax sr -t {threads} {input[0]} {input[1]} {input[2]} | "
-        "samtools sort -@5 -o {output}"
+        "minimap2 -acx sr -t {threads} {input[0]} {input[1]} {input[2]} | "
+        "samtools view -bS - > {output}"
 
-rule quantify:
+rule em_count:
     input:
-        config["annotated"] + "metagenome.ffn",
+        config["annotate"] + "metagenome.ffn",
         config["txn_align"] + "{sample}.bam"
     output:
-        config["quantify"] + "{sample}/quant.sf"
+        config["em_count"] + "{sample}/quant.sf"
+    params:
+        outdir = config["em_count"] + "{sample}"
     threads: 16
     shell:
-        "salmon quant -p {threads} -l A -a "
-        "-t {input[0]} {input[1]} -o {output}"
+        "salmon quant -p {threads} -l SF "
+        "-t {input[0]} -a {input[1]} -o {params.outdir} &> /dev/null"
+
+rule merge:
+    input:
+        config["annotate"] + "metagenome.tsv",
+        config["em_count"] + samples + "/quant.sf"
+    output:
+        config["merge"]
+    run:
+        annotations = pd.read_csv(input[0], sep="\t")
+        read = []
+        if not isinstance(input[1], list):
+            input[1] = [input[1]]
+        for p in input[1]:
+            sample = path.basename(path.dirname(p))
+            counts = pd.read_csv(p, sep="\t")
+            counts.columns = [
+                "locus_tag", "length", "effective_length", "tpm", "reads"]
+            counts["sample"] = sample
+            read.append(counts)
+        read = pd.concat(read)
+        counts = pd.merge(annotations, read, on="locus_tag")
+        counts.to_csv(output[0])
+

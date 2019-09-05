@@ -1,10 +1,13 @@
 name: metagenomics
 channels:
-  - conda-forge
   - bioconda
+  - conda-forge
   - defaults
 dependencies:
   - fastp
   - megahit
   - minimap2
   - prokka
+  - metabat2
+  - salmon
+  - snakemake-minimal
