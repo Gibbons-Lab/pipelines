@@ -1,0 +1,10 @@
+name: shallow_shotgun
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - minimap2
+  - motus
+  - salmon
+  - snakemake-minimal

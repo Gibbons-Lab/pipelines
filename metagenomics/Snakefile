@@ -53,11 +53,13 @@ rule assembly_align:
         config["preprocess"] + "{sample}_R2_001.fastq.gz",
         config["assembly"] + "final.contigs.fa"
     output:
-        config["align"] + "{sample}.bam"
+        config["align"] + "{sample}.bam",
+        config["align"] + "{sample}.bai"
     threads: 16
     shell:
         "minimap2 -ax sr -t {threads} {input[2]} {input[0]} {input[1]} | "
-        "samtools sort -@{threads} -o {output}"
+        "samtools sort -@{threads} -o {output[0]} && "
+        "samtools index {output[0]} {output[1]}"
 
 
 rule binning:
@@ -70,11 +72,13 @@ rule binning:
         bins = config["binning"]
     threads: 16
     run:
-        if not isinstance(input[1], list):
-            input[1] = [input[1]]
+        if len(input) == 2:
+            files = [input[1]]
+        else:
+            files = input[1:len(input)]
         shell(
             "jgi_summarize_bam_contig_depths --outputDepth {output} " +
-            " ".join(input[1])
+            " ".join(files)
         )
         shell(
             "metabat2 -t {threads} -i {input[0]} -a {output} " +
@@ -83,7 +87,7 @@ rule binning:
 
 rule checkm:
     input:
-        config["binning"]
+        config["binning"] + "depth.txt"
     output:
         config["binning"] + "checkm/checkm.txt"
     threads: 16
@@ -143,9 +147,11 @@ rule merge:
     run:
         annotations = pd.read_csv(input[0], sep="\t")
         read = []
-        if not isinstance(input[1], list):
-            input[1] = [input[1]]
-        for p in input[1]:
+        if len(input) == 2:
+            paths = [input[1]]
+        else:
+            paths = input[1:len(input)]
+        for p in paths:
             sample = path.basename(path.dirname(p))
             counts = pd.read_csv(p, sep="\t")
             counts.columns = [
