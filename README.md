@@ -13,7 +13,7 @@ rules:
 Pipelines will usually operate from a top level project
 directory structured in the following way:
 
-`
+```
 project/
     > Snakefile
     > config.yml
