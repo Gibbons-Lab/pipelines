@@ -106,3 +106,6 @@ venv.bak/
 # other
 .vscode
 .benchmarks
+
+# Mac files
+.*DS_Store

@@ -1,9 +1,12 @@
 import pandas as pd
 from os import path
+from tempfile import TemporaryDirectory
 
 configfile: "config.yml"
 
 manifest = pd.read_csv(path.join(config["data"], config["manifest"]))
+samples = manifest.iloc[:, 1].str.split("_R\\d_001.+$").str[0]
+tempdir = TemporaryDirectory("snakemake")
 
 def str_to_taxa(taxon):
     taxon = taxon.split("|")
@@ -29,39 +32,25 @@ rule all:
             lev=["D", "P", "G", "S"]
         )
 
-rule preprocess:
-    input:
-        path.join(config["data"], "raw", "{sample}.fastq.gz")
-    output:
-        path.join(config["data"], "preprocessed", "{sample}.fastq.gz"),
-        path.join(config["data"], "preprocessed", "{sample}_report.json"),
-        path.join(config["data"], "preprocessed", "{sample}_report.html")
-    params:
-        trim_front = 0,
-        min_length = 15,
-        quality_threshold = 20
-    threads: 1
-    shell:
-        "fastp -i {input[0]} -o {output[0]} "
-        "--json {output[1]} --html {output[2]} "
-        "--trim_front1 {params.trim_front} -l {params.min_length} "
-        "-3 -M {params.quality_threshold} -r {input[0]}"
-
 rule classify:
     input:
-        path.join(config["data"], "preprocessed", "{sample}.fastq.gz")
+        path.join(config["ref"], "kraken2_extended"),
+        path.join(config["data"], "preprocessed", "{sample}_R1_001.fastq.gz"),
+        path.join(config["data"], "preprocessed", "{sample}_R2_001.fastq.gz")
     output:
         path.join(config["data"], "taxonomy", "{sample}.k2"),
         path.join(config["data"], "taxonomy", "{sample}.tsv")
-    threads: 4
+    threads: 20
+    conda: "conda_classify.yml"
     shell:
-        "kraken2 --db /proj/gibbons/refs/kraken2_extended "
+        "kraken2 --db {input[0]} "
         "--threads {threads} --gzip-compressed --output {output[0]} "
-        " --report {output[1]} {input}"
+        " --report {output[1]} --paired {input[1]} {input[2]}"
 
 rule count:
     input:
-        path.join(config["data"], "taxonomy", "{sample}.tsv")
+        path.join(config["data"], "taxonomy", "{sample}.tsv"),
+        path.join(config["ref"], "kraken2_extended")
     output:
         path.join(config["data"], "taxonomy", "{level}", "{sample}.b2"),
         path.join(config["data"], "taxonomy", "{level}", "{sample}_mpa.tsv")
@@ -71,9 +60,10 @@ rule count:
         bracken_input = path.join(config["data"], "taxonomy", "{level}", "{sample}.tsv"),
         bracken_report = path.join(config["data"], "taxonomy", "{level}", "{sample}_bracken.tsv")
     threads: 1
+    conda: "conda_classify.yml"
     shell:
-        "cp {input} {params.bracken_input} && "
-        "bracken -d /proj/gibbons/refs/kraken2_default -i {params.bracken_input} "
+        "cp -f {input[0]} {params.bracken_input} && "
+        "bracken -d {input[1]} -i {params.bracken_input} "
         "-l {wildcards.level} -o {output[0]} -r {params.read_length} "
         "-t {params.threshold} && "
         "kreport2mpa.py -r {params.bracken_report} -o {output[1]} "
@@ -83,14 +73,14 @@ rule merge:
     input:
         expand(
             path.join(config["data"], "taxonomy", "{{level}}", "{sample}.b2"),
-            sample=manifest.id
+            sample=samples
         )
     output:
         path.join(config["data"], "{level}_counts.csv")
     threads: 1
     run:
         taxa_files = []
-        for sa in manifest.id:
+        for sa in samples:
             counts = pd.read_csv(
                 path.join(config["data"], "taxonomy", wildcards.level,
                           "%s_mpa.tsv" % (sa)),

@@ -7,7 +7,9 @@ dependencies:
   - fastp
   - megahit
   - minimap2
-  - prokka
+  - prodigal
   - metabat2
   - salmon
   - snakemake-minimal
+  - pandas
+  - samtools

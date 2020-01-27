@@ -1,0 +1,10 @@
+name: classify
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - bracken
+  - pandas
+  - minimap2
+  - snakemake-minimal
