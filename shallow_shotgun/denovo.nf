@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 
 params.data_dir = "data"
-params.refs = "../refs/"
+params.refs = "/proj/gibbons/refs/eggnog-mapper/data"
 params.manifest = "manifest.csv"
 
 params.trim_front = 5
@@ -35,23 +35,18 @@ process preprocess {
     """
 }
 
-merged = processed_assembly
-    .map{it[1]}
-    .reduce{a, b -> return "${a},${b}"}
-
 process megahit {
     cpus max_threads
     publishDir "${params.data_dir}/assembled"
 
     input:
-    val(forward) from merged
+    file(forward) from processed_assembly.collect{it[1]}
 
     output:
     file("contigs/final.contigs.fa") into (assembled_align, assembled_genes)
 
     """
-    rm -rf contigs && \
-    megahit -r ${forward} -o contigs -t ${task.cpus}
+    megahit -r ${forward.join(",")} -o contigs -t ${task.cpus}
     """
 }
 
@@ -97,7 +92,7 @@ process em_count {
     file("${id}/quant.sf") into salmon_quants
 
     """
-    salmon quant -p ${task.cpus} -l SF -t ${genes} -a ${bam} -o ${id} &> /dev/null
+    salmon quant -p ${task.cpus} -l SF -t ${genes} -a ${bam} -o ${id}
     """
 }
 
@@ -139,7 +134,6 @@ process merge {
 process annotate {
     cpus max_threads
     publishDir "${params.data_dir}/annotated"
-    conda "eggnog-mapper>=2.0.0"
 
     input:
     set file(genes), file(proteins) from genes_annotate
@@ -148,8 +142,11 @@ process annotate {
     file("denovo.emapper.annotations")
 
     """
+    set +eu && \
+    source ~/miniconda3/etc/profile.d/conda.sh && \
+    conda activate eggnog && \
     emapper.py -i ${proteins} --output denovo -m diamond \
-        --data_dir ${params.refs}/eggnog-mapper/data \
+        --data_dir ${params.eggnog_refs} \
         --cpu ${task.cpus} --resume
     """
 }

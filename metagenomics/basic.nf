@@ -34,23 +34,23 @@ process preprocess {
     """
 }
 
-merged = processed_assembly
-    .map{tuple(it[1], it[2])}
-    .reduce{a, b -> return tuple("${a[0]},${b[0]}", "${a[1]},${b[1]}")}
-
 process megahit {
     cpus max_threads
     publishDir "${params.data_dir}/assembled"
 
     input:
-    set forward, reverse from merged
+    val(all) from processed_assembly.collect()
 
     output:
     file("contigs/final.contigs.fa") into (assembled_align, assembled_genes)
 
+    def reads = all
+        .map{tuple(it[1], it[2])}
+        .reduce{a, b -> return tuple("${a[0]},${b[0]}", "${a[1]},${b[1]}")}
+
     """
     rm -rf contigs && \
-    megahit -1 ${forward} -2 ${reverse} -o contigs -t ${task.cpus}
+    megahit -1 ${all[0]} -2 ${all[1]} -o contigs -t ${task.cpus}
     """
 }
 
@@ -142,7 +142,6 @@ process merge {
 process annotate {
     cpus max_threads
     publishDir "${params.data_dir}/annotated"
-    conda "eggnog-mapper>=2.0.0"
 
     input:
     set file(genes), file(proteins) from genes_annotate
@@ -151,6 +150,7 @@ process annotate {
     file("denovo.emapper.annotations")
 
     """
+    conda activate eggnog && \
     emapper.py -i ${proteins} --output denovo -m diamond \
         --data_dir /proj/gibbons/refs/eggnog-mapper/data \
         --cpu ${task.cpus} --resume
