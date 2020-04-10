@@ -2,7 +2,7 @@
 
 params.data_dir = "data"
 params.refs = "/proj/gibbons/refs/"
-params.eggnog_refs = "/proj/gibbons/refs/eggnog/data"
+params.eggnog_refs = "/proj/gibbons/refs/eggnog-mapper/data"
 params.manifest = "manifest.csv"
 
 params.trim_front = 5
@@ -16,12 +16,13 @@ max_threads = 20
 Channel
     .fromPath("${params.data_dir}/raw/*.fastq.gz")
     .ifEmpty { error "Cannot find any read files in ${params.data_dir}!" }
-    .map{file -> tuple(file.baseName, file)}
+    .map{file -> tuple(file.baseName.split("\\.")[0], file)}
     .set{raw}
 
+
 Channel
-    .from(["D", "P", "G", "S"])
-    .set{levels, merge_levels}
+    .fromList(["D", "P", "G", "S"])
+    .set{levels}
 
 process preprocess {
     cpus 1
@@ -30,13 +31,13 @@ process preprocess {
     set id, file(reads) from raw
 
     output:
-    set id, file("${id}.fastq.gz"),
+    set id, file("${id}_filtered.fastq.gz"),
             file("${id}.json"),
             file("${id}.html") into processed_assembly, processed_align,
                                     processed_kraken
 
     """
-    fastp -i ${reads} -o ${id}.fastq.gz \
+    fastp -i ${reads} -o ${id}_filtered.fastq.gz \
         --json ${id}.json --html ${id}.html \
         --trim_front1 ${params.trim_front} -l ${params.min_length} \
         -3 -M ${params.quality_threshold} -r ${reads}
@@ -44,7 +45,7 @@ process preprocess {
 }
 
 process kraken {
-    cpus 4
+    cpus 8
 
     input:
     set id, file(forward), file(json), file(html) from processed_kraken
@@ -53,9 +54,9 @@ process kraken {
     set id, file("${id}.k2"), file("${id}.tsv") into kraken_reports
 
     """
-    kraken2 --db /proj/gibbons/refs/kraken2_nt
-        --threads ${task.cpus} --gzip-compressed --output ${id}.k2
-        --report ${id}.tsv ${forward}"
+    ~/.local/bin/kraken2 --db /proj/gibbons/refs/kraken2_default \
+        --threads ${task.cpus} --gzip-compressed --output ${id}.k2 \
+        --report ${id}.tsv ${forward}
     """
 }
 
@@ -69,11 +70,11 @@ process count_taxa {
     set id, lev, file("${lev}/${id}.b2"), file("${lev}/${id}_mpa.tsv") into bracken_reports
 
     """
-    cp ${report} ${lev}/${report} &&
-        bracken -d /proj/gibbons/refs/kraken2_nt -i ${lev}/${report}
-        -l ${lev} -o ${lev}/${id}.b2 -r {params.read_length}
-        -t {params.threshold} &&
-        kreport2mpa.py -r ${lev}/${id}_bracken.tsv -o ${lev}/${id}_mpa.tsv
+    mkdir ${lev} && cp ${report} ${lev}/${report} && \
+        bracken -d /proj/gibbons/refs/kraken2_default -i ${lev}/${report} \
+        -l ${lev} -o ${lev}/${id}.b2 -r ${params.read_length} \
+        -t ${params.threshold} -w ${lev}/${id}_bracken.tsv && \
+        kreport2mpa.py -r ${lev}/${id}_bracken.tsv -o ${lev}/${id}_mpa.tsv \
         --no-intermediate-ranks
     """
 }
@@ -83,12 +84,13 @@ bracken_reports
     .groupTuple()
     .set{merge_groups}
 
+
 process merge_taxonomy {
     cpus 1
     publishDir "${params.data_dir}"
 
     input:
-    set lev, stdin file(reports)
+    set lev, file(reports) from merge_groups
 
     output:
     file("${lev}_counts.csv")
@@ -108,10 +110,12 @@ process merge_taxonomy {
         return taxa
 
     read = []
-    paths = stdin.readline().split(" ")
+    lev = "${lev}"
+    input = "${reports.join(",")}"
+    paths = input.split(",")
 
     for p in paths:
-        lev, id = re.findall(r"/(\\w)/(\\w+)_mpa.tsv", p)
+        id = re.findall("(\\w+)_mpa.tsv", p)[0]
         counts = pd.read_csv(p, sep="\t", header=None)
         counts = counts[counts.iloc[:, 0].str.contains(
             str(lev).lower() + "_")]
@@ -123,9 +127,6 @@ process merge_taxonomy {
     """
 }
 
-merged = processed_assembly
-    .map{it[1]}
-    .reduce{a, b -> return "${a},${b}"}
 
 process megahit {
     cpus max_threads
