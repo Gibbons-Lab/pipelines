@@ -2,7 +2,7 @@
 
 params.data_dir = "data"
 params.refs = "/proj/gibbons/refs/"
-params.eggnog_refs = "/proj/gibbons/refs/eggnog-mapper/data"
+params.eggnog_refs = "/tmp/eggnog"
 params.manifest = "manifest.csv"
 
 params.trim_front = 5
@@ -34,7 +34,7 @@ process preprocess {
     set id, file("${id}_filtered.fastq.gz"),
             file("${id}.json"),
             file("${id}.html") into processed_assembly, processed_align,
-                                    processed_kraken
+                                    processed_kraken, processed_contigs
 
     """
     fastp -i ${reads} -o ${id}_filtered.fastq.gz \
@@ -220,7 +220,7 @@ process merge {
         read.append(counts)
     read = pd.concat(read)
     loggy.info("writing compressed output")
-    read.to_csv("function_counts.csv.gz")
+    read.to_csv("function_counts.csv.gz", index=False)
     """
 }
 
@@ -241,6 +241,52 @@ process annotate {
     emapper.py -i ${proteins} --output denovo -m diamond \
         --data_dir ${params.eggnog_refs} \
         --cpu ${task.cpus} --resume
+    """
+}
+
+
+process contig_align {
+    cpus 8
+    publishDir "${params.data_dir}/contig_aligned"
+
+    input:
+    set id, file(forward), file(json), file(html), file(contigs) from processed_contigs.combine(assembled_align)
+
+    output:
+    set id, file("${id}.bam") into contigs_aligned
+
+    """
+    minimap2 -acx sr -t ${task.cpus} ${contigs} ${forward} | \
+    samtools view -bS - -o ${id}.bam
+    """
+}
+
+process replication_rates {
+    cpus 20
+    publishDir "${params.data_dir}"
+
+    input:
+    path files from contigs_aligned.map{it[1]}.collect()
+
+    output:
+    tuple file("replication.rds"), file("rates.csv") into replication
+
+    """
+    #!/usr/bin/env Rscript
+
+    library(mbtools)
+    library(futile.logger)
+
+    flog.threshold(DEBUG)
+
+    files <- strsplit("$files", " ")[[1]]
+    ids <- basename(files) %>% gsub(".bam", "", .)
+    alns <- data.table(id=ids, alignment=files, success=TRUE)
+
+    co <- bin_coverage(alns, threads=${task.cpus})
+    rates <- replication_rates(co, threads=${task.cpus}, min_points_fit=40)
+    saveRDS(rates, "replication.rds")
+    fwrite(rates[["rate"]], "rates.csv")
     """
 }
 
