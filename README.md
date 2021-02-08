@@ -3,10 +3,9 @@
 This repo contains various analysis pipelines for the lab. Here are the basic
 rules:
 
-- each folder is a pipeline for a particular analysis - data type combination
-- pipelines are [snakemake](https://snakemake.readthedocs.io/en/stable/) workflows
+- each folder includes pipelines for a particular analysis - data type combination
+- pipelines are [nextflow](https://www.nextflow.io/) workflows
 - each pipeline comes with a list of conda environment files that manage the required software
-- each pipeline comes with a config file setting some global options
 
 ## Data layout
 
@@ -15,8 +14,7 @@ directory structured in the following way:
 
 ```
 project/
-    > Snakefile
-    > config.yml
+    > [WORKFLOW].nf
     > data
         > raw
         > step1
@@ -41,21 +39,12 @@ for the pipeline.
 conda env create -f conda.yml
 ```
 
-Some pipelines may have separated conda environments for individual steps.
-Those are managed by snakemake but will require to run snakemake with the
-`--use-conda` flag.
-
 ## Run the pipeline
 
 After adjusting values in `config.yml` you can run the pipeline with
 
 ```bash
-snakemake
+nextflow run [WORKFLOW].nf -resume
 ```
 
-In general you will want to specify the number of threads used by snakemake. Snakemake
-will then balance individual steps over all threads automatically. For instance:
-
-```bash
-snakemake --cores 24
-```
+By default this will use all available CPUs and RAM unless specified otherwise in a personal [netxflow config](https://www.nextflow.io/docs/latest/config.html#scope-executor).
