@@ -39,9 +39,15 @@ for the pipeline.
 conda env create -f conda.yml
 ```
 
+Activate the environment (usualy named after the piepline):
+
+```bash
+conda activate metagenomics
+```
+
 ## Run the pipeline
 
-After adjusting values in `config.yml` you can run the pipeline with
+After setup you can run the pipeline with
 
 ```bash
 nextflow run [WORKFLOW].nf -resume
