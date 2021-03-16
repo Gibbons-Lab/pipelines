@@ -1,4 +1,4 @@
-name: metagenomics
+name: checkm
 channels:
   - bioconda
   - conda-forge

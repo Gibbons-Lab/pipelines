@@ -1,7 +1,7 @@
 name: metagenomics
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
   - defaults
 dependencies:
   - fastp
@@ -10,6 +10,7 @@ dependencies:
   - prodigal
   - metabat2
   - salmon
-  - snakemake-minimal
+  - loguru
   - pandas
   - samtools
+  - multiqc

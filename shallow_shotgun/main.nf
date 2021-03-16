@@ -54,7 +54,7 @@ process kraken {
     set id, file("${id}.k2"), file("${id}.tsv") into kraken_reports
 
     """
-    ~/.local/bin/kraken2 --db /proj/gibbons/refs/kraken2_default \
+    kraken2 --db /proj/gibbons/refs/kraken2_default \
         --threads ${task.cpus} --gzip-compressed --output ${id}.k2 \
         --report ${id}.tsv ${forward}
     """
@@ -104,6 +104,11 @@ process merge_taxonomy {
     import pandas as pd
     import re
 
+    map = pd.Series({
+        "d": "domain", "p": "phylum", "o": "order",
+        "c": "class", "f": "family", "g": "genus", "s": "species"
+    })
+
     def str_to_taxa(taxon):
         taxon = taxon.split("|")
         taxa = pd.Series({t.split("_")[0]: t.split("_")[1] for t in taxon})
@@ -120,6 +125,8 @@ process merge_taxonomy {
         counts = counts[counts.iloc[:, 0].str.contains(
             str(lev).lower() + "_")]
         taxa = counts.iloc[:, 0].apply(str_to_taxa)
+        taxa.rename(columns=map, inplace=True)
+        taxa = taxa[map[map.isin(taxa.columns)]]
         taxa["reads"] = counts.iloc[:, 1]
         taxa["sample"] = id
         read.append(taxa)
@@ -224,7 +231,7 @@ process merge {
     """
 }
 
-process annotate {
+process annotate_eggnog {
     cpus max_threads
     publishDir "${params.data_dir}/annotated"
 
@@ -243,6 +250,24 @@ process annotate {
         --cpu ${task.cpus} --resume
     """
 }
+
+// process annotate_md5nr {
+//     cpus max_threads
+//     publishDir "${params.data_dir}/annotated"
+
+//     input:
+//     set file(genes), file(proteins) from genes_annotate
+
+//     output:
+//     file("prots2md5nr.csv")
+
+//     """
+//     diamond blastp -d ${params.refs}/md5nr.dmnd \
+//         -q ${proteins} -o prots2md5nr.m8 -p ${task.cpus} && \
+//     Rscript -e "data.table::fwrite(mbtools::read_blast('prots2md5nr.m8'), 'prots2md5nr.csv')"
+//     """
+
+// }
 
 
 process contig_align {
@@ -283,7 +308,7 @@ process replication_rates {
     ids <- basename(files) %>% gsub(".bam", "", .)
     alns <- data.table(id=ids, alignment=files, success=TRUE)
 
-    co <- bin_coverage(alns, threads=${task.cpus})
+    co <- bin_coverage(alns, threads=${task.cpus}, min_length=5000)
     rates <- replication_rates(co, threads=${task.cpus}, min_points_fit=40)
     saveRDS(rates, "replication.rds")
     fwrite(rates[["rate"]], "rates.csv")
