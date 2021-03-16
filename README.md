@@ -39,10 +39,16 @@ for the pipeline.
 conda env create -f conda.yml
 ```
 
-Activate the environment (usualy named after the piepline):
+Activate the environment (usualy named after the pipeline):
 
 ```bash
 conda activate metagenomics
+```
+
+If present also install R dependencies
+
+```bash
+Rscript setup.R
 ```
 
 ## Run the pipeline
