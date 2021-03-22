@@ -24,14 +24,12 @@
 
 **Definition**: `binning.nf`
 
-8. coverage profiles using minimap2 and metabat2
-9. metagenomic binning with metabat2
-10. taxonomy assignment and quality control with [BAT/CAT](https://github.com/dutilh/CAT)
 
 ### Steps:
 
 - metagenomic binning with [Metabat2](https://bitbucket.org/berkeleylab/metabat/)
-- binning quality check with [checkm](https://ecogenomics.github.io/CheckM/)
+- contig taxonomy assignment using [CAT](https://github.com/dutilh/CAT)
+- binning quality check with [BAT](https://github.com/dutilh/CAT)
 
 ### Setup
 
