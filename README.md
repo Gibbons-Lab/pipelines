@@ -37,6 +37,7 @@ for the pipeline.
 
 ```bash
 conda env create -f conda.yml
+conda env create -f eggnog.yml
 ```
 
 Activate the environment (usualy named after the pipeline):
@@ -50,6 +51,25 @@ If present also install R dependencies
 ```bash
 Rscript setup.R
 ```
+
+You may also create a [nextflow config](https://www.nextflow.io/docs/latest/config.html) either in the project
+directory as `nextflow.config` or in your user HOME as `~/.nextflow/config`. Here is an example for moneta
+
+```
+executor {
+    name = "local"
+    cpus = 32
+    memory = "350GB"
+}
+
+tower {
+    accessToken = "<TOKEN>"
+    enabled = false
+}
+```
+
+The tower part is only necessary if you want to use [Nextflow Tower](https://tower.nf)
+to track your pipeline.
 
 ## Run the pipeline
 

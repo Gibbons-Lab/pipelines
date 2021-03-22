@@ -14,3 +14,4 @@ dependencies:
   - pandas
   - samtools
   - multiqc
+  - bioconda::cat

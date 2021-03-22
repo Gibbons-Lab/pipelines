@@ -1,8 +1,0 @@
-name: checkm
-channels:
-  - bioconda
-  - conda-forge
-  - defaults
-dependencies:
-  - python=2.7
-  - checkm-genome

@@ -109,3 +109,8 @@ venv.bak/
 
 # Mac files
 .*DS_Store
+
+# Nextflow files
+work
+.nextflow
+.nextflow.log*
