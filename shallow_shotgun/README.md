@@ -1,5 +1,7 @@
 # Shallow shotgun data pipeline
 
+**~~~ deprecated, use the metagenomics workflows in single-end mode ~~~**
+
 **Feasible data:**
 
 - single end metagenomic reads
