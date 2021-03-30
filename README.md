@@ -37,7 +37,6 @@ for the pipeline.
 
 ```bash
 conda env create -f conda.yml
-conda env create -f eggnog.yml
 ```
 
 Activate the environment (usualy named after the pipeline):
