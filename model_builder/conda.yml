@@ -1,0 +1,12 @@
+channels:
+  - conda-forge
+  - bioconda
+  - default
+dependencies:
+  - diamond
+  - cobra
+  - pip
+  - prodigal
+  - pip:
+    - carveme
+    - memote

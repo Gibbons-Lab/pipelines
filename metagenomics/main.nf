@@ -44,6 +44,7 @@ def helpMessage() {
     """.stripIndent()
 }
 
+params.help = false
 // Show help message
 if (params.help) {
     helpMessage()
@@ -404,11 +405,11 @@ workflow {
     multiqc(merge_taxonomy.out.collect())
 
     if (params.single_end) {
-        forward = preprocess.out.map{it -> it[1]}.toSortedList()
+        forward = preprocess.out.map{fi -> fi[1]}.toSortedList()
         megahit(forward, forward)
     } else {
-        forward = preprocess.out.map{it -> it[1][0]}.toSortedList()
-        reverse = preprocess.out.map{it -> it[1][1]}.toSortedList()
+        forward = preprocess.out.map{fi -> fi[1][0]}.toSortedList()
+        reverse = preprocess.out.map{fi -> fi[1][1]}.toSortedList()
         megahit(forward, reverse)
     }
 
