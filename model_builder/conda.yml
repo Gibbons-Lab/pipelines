@@ -1,8 +1,11 @@
+name: model_builder
 channels:
   - conda-forge
   - bioconda
   - default
 dependencies:
+  - python=3.7
+  - nextflow
   - diamond
   - cobra
   - pip
@@ -10,3 +13,4 @@ dependencies:
   - pip:
     - carveme
     - memote
+    - /proj/gibbons/software/ibm/cplex/python/3.7/x86-64_linux/
