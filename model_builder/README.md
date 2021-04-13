@@ -15,9 +15,23 @@
 3. Model construction using [CARVEME](https://carveme.readthedocs.io/)
 4. Model quality checks using [MEMOTE](https://memote.readthedocs.io/))
 
+For CARVEME use conda:
 
 ```bash
 conda env create -f conda.yml
+```
+
+For gapseq use singularity:
+
+```bash
+nextflow run main.nf --method gapseq -with-singularity cdiener/gapseq:2021.04.5
+```
+
+Make sure that singularity runs with the `--no-home` option and map your data dir
+into singularity. For instance, by adding the following to your nextflow config:
+
+```
+singularity.runOptions = "--no-home -B /MY/DATA/DIR,/tmp"
 ```
 
 ## Options:
@@ -34,7 +48,9 @@ A run with all parametrs set would look like:
 
 General options:
   --data_dir [str]              The main data directory for the analysis (must contain `raw`).
+  --method                      The method used to build the models. Either `carveme` or `gapseq`.
 Growth Media:
-  --media_db                    A file containing growth media specification for CARVEME.
-  --media                       Comma-separated list of media names to use.
+  --media_db                    A file containing growth media specification for CARVEME. This is a
+                                TSV file for carveme and a CSV file for gapseq.
+  --media                       Comma-separated list of media names to use. Only used for CARVEME.
 ```

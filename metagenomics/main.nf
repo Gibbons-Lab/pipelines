@@ -131,7 +131,7 @@ process count_taxa {
 
 process merge_taxonomy {
     cpus 1
-    publishDir "${params.data_dir}"
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
     tuple val(lev), path(reports)
@@ -176,7 +176,7 @@ process merge_taxonomy {
 }
 
 process multiqc {
-    publishDir "${params.data_dir}"
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
     path(taxonomy)
@@ -261,7 +261,7 @@ process em_count {
 
 process merge_counts {
     cpus 1
-    storeDir "${params.data_dir}"
+    storeDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
     path(salmon_quants)
@@ -297,7 +297,7 @@ process merge_counts {
 
 process annotate {
     cpus max_threads
-    publishDir "${params.data_dir}/annotated"
+    publishDir "${params.data_dir}/annotated", mode: "copy", overwrite: true
 
     input:
     tuple path(genes), path(proteins)
@@ -355,7 +355,7 @@ process replication_rates {
 
 process merge_rates {
     cpus 1
-    publishDir "${params.data_dir}"
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
     path(rates)
