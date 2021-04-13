@@ -306,9 +306,6 @@ process annotate {
     path("denovo.emapper.annotations")
 
     """
-    set +eu && \
-    source ~/miniconda3/etc/profile.d/conda.sh && \
-    conda activate eggnog && \
     emapper.py -i ${proteins} --output denovo -m diamond \
         --data_dir ${params.eggnog_refs} \
         --cpu ${task.cpus} --resume

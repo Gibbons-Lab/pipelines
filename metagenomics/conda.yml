@@ -14,4 +14,10 @@ dependencies:
   - pandas
   - samtools
   - multiqc
+  - psutil
+  - biopython
+  - eggnog-mapper
   - bioconda::cat
+  - pip
+  - pip:
+    - eggnog-mapper

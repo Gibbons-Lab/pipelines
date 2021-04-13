@@ -5,6 +5,7 @@ nextflow.enable.dsl = 2
 params.data_dir = "${baseDir}/data"
 params.media_db = null
 params.media = null
+params.method = "carveme"
 
 
 def helpMessage() {
@@ -20,9 +21,12 @@ def helpMessage() {
 
     General options:
       --data_dir [str]              The main data directory for the analysis (must contain `raw`).
+      --method [str]                The algorithm to use. Either `carveme` or `gapseq`. `gapseq`
+                                    requires docker or singularity.
     Growth Media:
-      --media_db                    A file containing growth media specification for CARVEME.
-      --media                       Comma-separated list of media names to use.
+      --media_db                    A file containing growth media specification.
+                                    `*.tsv` for CARVEME and `*.csv` for gapseq.
+      --media                       Comma-separated list of media names to use. Only used for CARVEME.
     """.stripIndent()
 }
 
@@ -84,7 +88,7 @@ process find_genes {
   """
 }
 
-process build_model {
+process build_carveme {
   cpus 2
 
   input:
@@ -107,6 +111,29 @@ process build_model {
   else
     """
     carve ${genes_aa} -o "${id}_draft".xml.gz --diamond-args "-p ${task.cpus}" --fbc2 -v
+    """
+}
+
+process build_gapseq {
+  cpus 1
+  publishDir "${params.data_dir}/models", mode: "copy", overwrite: true
+
+  input:
+  tuple val(id), path(assembly)
+
+  output:
+  tuple val("${id}"), path("${id}.xml.gz")
+
+  script:
+  if (params.media_db)
+    """
+    gapseq -n doall ${assembly} ${params.media_db}
+    gzip ${id}.xml
+    """
+  else
+    """
+    gapseq -n doall ${assembly} /opt/gapseq/data/media/gut.csv
+    gzip ${id}.xml
     """
 }
 
@@ -172,7 +199,7 @@ process check_model {
   tuple val("${id}"), path("${id}.html")
 
   """
-  memote report snapshot ${model} --solver cplex --filename ${id}.html
+  memote report snapshot ${model} --filename ${id}.html
   """
 }
 
@@ -185,10 +212,19 @@ workflow {
     .map{row -> tuple(row.baseName.split("\\.f")[0], tuple(row))}
     .set{genomes}
 
-  init_db()
-  download_bigg()
-  find_genes(genomes)
-  build_model(find_genes.out.combine(init_db.out))
-  annotate_model(build_model.out.combine(download_bigg.out))
-  check_model(annotate_model.out)
+  def models = null
+  if (params.method == "carveme") {
+    init_db()
+    download_bigg()
+    find_genes(genomes)
+    build_carveme(find_genes.out.combine(init_db.out))
+    annotate_model(build_carveme.out.combine(download_bigg.out))
+    models = annotate_model.out
+  } else if (params.method == "gapseq") {
+    build_gapseq(genomes)
+    models = build_gapseq.out
+  } else {
+    error "Method must be either `carveme` or `gapseq`."
+  }
+  check_model(models)
 }
