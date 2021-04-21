@@ -4,6 +4,7 @@ channels:
   - bioconda
   - defaults
 dependencies:
+  - nextflow>=20.10.0
   - fastp
   - megahit
   - kraken2>=2.1.0
