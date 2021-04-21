@@ -13,6 +13,9 @@ params.min_length = 50
 params.quality_threshold = 20
 params.read_length = 150
 params.threshold = 10
+params.contig_length = 500
+params.overlap = 0.8
+params.identity = 0.99
 
 max_threads = 24
 
@@ -41,6 +44,10 @@ def helpMessage() {
       --min_length [str]            Minimum accepted length for a read.
       --quality_threshold [str]     Smallest acceptable average quality.
       --threshold [str]             Smallest abundance threshold used by Kraken.
+    Assembly:
+      --contig_length [int]         Minimum length of a contig.
+      --identity [double]           Minimum average nucleotide identity.
+      --overlap [double]            Minimum required overlap between contigs.
     """.stripIndent()
 }
 
@@ -191,25 +198,45 @@ process multiqc {
 
 
 process megahit {
-    cpus max_threads
+    cpus 4
     publishDir "${params.data_dir}/assembled"
 
     input:
-    path(forward)
-    path(reverse)
+    tuple val(id), path(reads), path(json), path(report)
 
     output:
-    path("contigs/final.contigs.fa")
+    tuple val(id), path("contigs/${id}.contigs.fa")
 
     script:
     if (params.single_end)
         """
-        megahit -r ${forward.join(",")} -o contigs -t ${task.cpus} -m 0.6
+        megahit -r ${reads} -o contigs -t ${task.cpus} -m 0.4 \
+                --min-contig-len ${params.contig_length} --out-prefix ${id}
+        sed -i -e "s/^>/>${id}_/" contigs/${id}.contigs.fa
         """
     else
         """
-        megahit -1 ${forward.join(",")} -2 ${reverse.join(",")} -o contigs -t ${task.cpus} -m 0.6
+        megahit -1 ${reads[0]} -2 ${reads[1]} -o contigs -t ${task.cpus} -m 0.4 \
+                --min-contig-len ${params.contig_length} --out-prefix ${id}
+        sed -i -e "s/^>/>${id}_/" contigs/${id}.contigs.fa
         """
+}
+
+process cluster_contigs {
+    cpus max_threads/2
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+    input:
+    path(assemblies)
+
+    output:
+    path("all_contigs.fna")
+
+    """
+    cat ${assemblies} > merged.fna
+    mmseqs easy-linclust merged.fna contigs tmp --cov-mode 0 -c ${params.overlap} --min-seq-id ${params.identity} --threads ${task.cpus}
+    mv contigs_rep_seq.fasta all_contigs.fna
+    """
 }
 
 process find_genes {
@@ -217,14 +244,82 @@ process find_genes {
     publishDir "${params.data_dir}/genes"
 
     input:
-    path(assembly)
+    tuple val(id), path(assembly)
 
     output:
-    tuple path("genes.ffn"), path("genes.faa")
+    tuple path("${id}.ffn"), path("${id}.faa")
 
     """
-    prodigal -p meta -i ${assembly} -o genes.gff -d genes.ffn \
-             -a genes.faa
+    if grep -q ">" ${assembly}; then
+        prodigal -p meta -i ${assembly} -o ${id}.gff -d ${id}.ffn \
+             -a ${id}.faa
+        sed -i -e "s/^>/>${id}_/" ${id}.faa
+        sed -i -e "s/^>/>${id}_/" ${id}.ffn
+    else
+        touch ${id}.faa
+        touch ${id}.ffn
+    fi
+    """
+}
+
+process cluster_transcripts {
+    cpus max_threads/2
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+    input:
+    path(transcripts)
+
+    output:
+    path("transcripts.fna")
+
+    """
+    cat ${transcripts} > merged.fna
+    mmseqs easy-linclust merged.fna transcripts tmp --cov-mode 0 -c ${params.overlap} --min-seq-id ${params.identity} --threads ${task.cpus}
+    mv transcripts_rep_seq.fasta transcripts.fna
+    """
+}
+
+process filter_proteins {
+    cpus 1
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+    input:
+    path(transcripts)
+    path(proteins)
+
+    output:
+    path("proteins.faa")
+
+    """
+    #!/usr/bin/env Rscript
+
+    library(Biostrings)
+
+    proteins <- "${proteins}"
+    system2("cat", c(strsplit(proteins, " ")[[1]], ">", "merged.faa"))
+
+    txns <- fasta.index("${transcripts}")
+    txn_ids <- trimws(txns[["desc"]])
+    prots <- readAAStringSet("merged.faa")
+    prot_ids <- trimws(names(prots))
+    names(prots) <- prot_ids
+    writeXStringSet(prots[prot_ids %in% txn_ids], "proteins.faa")
+    """
+}
+
+process transcript_index {
+    cpus max_threads
+    publishDir "${params.data_dir}/txn_bowtie2_index"
+
+    input:
+    path(txns)
+
+    output:
+    path("index")
+
+    """
+    mkdir index
+    bowtie2-build -f --threads ${task.cpus} ${txns} index/txns
     """
 }
 
@@ -233,22 +328,31 @@ process transcript_align {
     publishDir "${params.data_dir}/txn_aligned"
 
     input:
-    tuple val(id), path(reads), path(json), path(html), path(genes), path(aas)
+    tuple val(id), path(reads), path(json), path(html), path(index)
 
     output:
     tuple val(id), path("${id}.bam")
 
-    """
-    minimap2 -acx sr -t ${task.cpus} ${genes} ${reads} | \
-    samtools view -bS - -o ${id}.bam
-    """
+    script:
+    if (params.single_end)
+        """
+        bowtie2 -k 10 -p ${task.cpus} --mm --no-unal \
+            -x ${index}/txns -1 ${reads[0]} -2 ${reads[1]} | \
+            samtools view -bS - -o ${id}.bam
+        """
+    else
+        """
+        bowtie2 -k 10 -p ${task.cpus} --mm --no-unal \
+            -x ${index}/txns -U ${reads} | \
+            samtools view -bS - -o ${id}.bam
+        """
 }
 
 process em_count {
     cpus 8
 
     input:
-    tuple val(id), path(bam), path(genes), path(aas)
+    tuple val(id), path(bam), path(genes)
 
     output:
     path("${id}.sf")
@@ -297,16 +401,16 @@ process merge_counts {
 
 process annotate {
     cpus max_threads
-    publishDir "${params.data_dir}/annotated", mode: "copy", overwrite: true
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
-    tuple path(genes), path(proteins)
+    path(proteins)
 
     output:
-    path("denovo.emapper.annotations")
+    path("proteins.emapper.annotations")
 
     """
-    emapper.py -i ${proteins} --output denovo -m diamond \
+    emapper.py -i ${proteins} --output proteins -m diamond \
         --data_dir ${params.eggnog_refs} \
         --cpu ${task.cpus} --resume
     """
@@ -375,6 +479,7 @@ process merge_rates {
 }
 
 workflow {
+    // find files
     if (params.single_end) {
         Channel
             .fromPath("${params.data_dir}/raw/*.fastq.gz")
@@ -390,8 +495,10 @@ workflow {
             .set{raw}
     }
 
+    // quality filtering
     preprocess(raw)
 
+    // quantify taxa abundances
     kraken(preprocess.out)
     count_taxa(kraken.out.combine(levels))
     count_taxa.out.map{s -> tuple(s[1], s[3])}
@@ -399,25 +506,29 @@ workflow {
         .set{merge_groups}
     merge_taxonomy(merge_groups)
 
+    // quality overview
     multiqc(merge_taxonomy.out.collect())
 
-    if (params.single_end) {
-        forward = preprocess.out.map{fi -> fi[1]}.toSortedList()
-        megahit(forward, forward)
-    } else {
-        forward = preprocess.out.map{fi -> fi[1][0]}.toSortedList()
-        reverse = preprocess.out.map{fi -> fi[1][1]}.toSortedList()
-        megahit(forward, reverse)
-    }
+    // assemble de novo
+    megahit(preprocess.out)
+    cluster_contigs(megahit.out.map{sample -> sample[1]}.collect())
 
+    // find ORFs and collapse on 99% ANI
     find_genes(megahit.out)
-    preprocess.out.combine(find_genes.out) | transcript_align
-    em_count(transcript_align.out.combine(find_genes.out))
+    find_genes.out.map{sample -> sample[0]}.collect().set{transcripts}
+    find_genes.out.map{sample -> sample[1]}.collect().set{proteins}
+    cluster_transcripts(transcripts)
+    filter_proteins(cluster_transcripts.out, proteins)
+
+    // count gene abundances and annotate the genes
+    transcript_index(cluster_transcripts.out)
+    preprocess.out.combine(transcript_index.out) | transcript_align
+    em_count(transcript_align.out.combine(cluster_transcripts.out))
     merge_counts(em_count.out.collect())
+    annotate(filter_proteins.out)
 
-    contig_align(preprocess.out.combine(megahit.out))
-    replication_rates(contig_align.out)
-    merge_rates(replication_rates.out.collect())
+     // contig_align(preprocess.out.combine(megahit.out))
+    // replication_rates(contig_align.out)
+    // merge_rates(replication_rates.out.collect())
 
-    annotate(find_genes.out)
 }

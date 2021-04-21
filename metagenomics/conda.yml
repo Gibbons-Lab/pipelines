@@ -6,7 +6,10 @@ channels:
 dependencies:
   - fastp
   - megahit
-  - minimap2
+  - kraken2>=2.1.0
+  - bracken
+  - krakentools
+  - bowtie2
   - prodigal
   - metabat2
   - salmon
@@ -15,8 +18,11 @@ dependencies:
   - samtools
   - multiqc
   - biopython
-  - eggnog-mapper
   - bioconda::cat
   - pip
+  - matplotlib
+  - numpy
+  - pysam
+  - scipy
   - pip:
     - eggnog-mapper

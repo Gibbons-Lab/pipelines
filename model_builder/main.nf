@@ -48,12 +48,15 @@ process init_db {
   #!/usr/bin/env python
 
   import subprocess
+  from os import path
   from carveme import config, project_dir
   from carveme.cli.carve import first_run_check
 
   diamond_db = project_dir + config.get('generated', 'diamond_db')[:-5] + ".dmnd"
 
   if __name__ == "__main__":
+    if path.exists(diamond_db):
+      subprocess.check_output(["rm", diamond_db])
     first_run_check()
     with open("db_stats.txt", "w") as out:
       res = subprocess.check_output(["diamond", "dbinfo", "-d", diamond_db])
@@ -90,6 +93,7 @@ process find_genes {
 
 process build_carveme {
   cpus 2
+  publishDir "${params.data_dir}/carveme_models", mode: "copy", overwrite: true
 
   input:
   tuple val(id), path(genes_dna), path(genes_aa), path(db_info)
@@ -116,7 +120,7 @@ process build_carveme {
 
 process build_gapseq {
   cpus 1
-  publishDir "${params.data_dir}/models", mode: "copy", overwrite: true
+  publishDir "${params.data_dir}/gapseq_models", mode: "copy", overwrite: true
 
   input:
   tuple val(id), path(assembly)
@@ -139,7 +143,7 @@ process build_gapseq {
 
 process annotate_model {
   cpus 1
-  publishDir "${params.data_dir}/models", mode: "copy", overwrite: true
+  publishDir "${params.data_dir}/carveme_models_annotated", mode: "copy", overwrite: true
 
   input:
   tuple val(id), path(model), path(bigg)
@@ -218,8 +222,8 @@ workflow {
     download_bigg()
     find_genes(genomes)
     build_carveme(find_genes.out.combine(init_db.out))
-    annotate_model(build_carveme.out.combine(download_bigg.out))
-    models = annotate_model.out
+    //annotate_model(build_carveme.out.combine(download_bigg.out))
+    models = build_carveme.out
   } else if (params.method == "gapseq") {
     build_gapseq(genomes)
     models = build_gapseq.out
