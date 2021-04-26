@@ -16,8 +16,7 @@ params.threshold = 10
 params.contig_length = 500
 params.overlap = 0.8
 params.identity = 0.99
-
-max_threads = 24
+params.threads = 12
 
 def helpMessage() {
     log.info"""
@@ -35,6 +34,8 @@ def helpMessage() {
       --data_dir [str]              The main data directory for the analysis (must contain `raw`).
       --read_length [str]           The length of the reads.
       --single_end [bool]           Specifies that the input is single-end reads.
+      --threads [int]               The maximum number of threads a single process can use.
+                                    This is not the same as the maximum number of total threads used.
     Reference DBs:
       --refs [str]                  Folder in which to find references DBs.
       --eggnogg_refs [str]          Where to find EGGNOG references. Defaults to <refs>/eggnog.
@@ -157,7 +158,7 @@ process merge_taxonomy {
 
     def str_to_taxa(taxon):
         taxon = taxon.split("|")
-        taxa = pd.Series({t.split("_")[0]: t.split("_")[1] for t in taxon})
+        taxa = pd.Series({t.split("__")[0]: t.split("__")[1] for t in taxon})
         return taxa
 
     read = []
@@ -223,7 +224,7 @@ process megahit {
 }
 
 process cluster_contigs {
-    cpus max_threads/2
+    cpus params.threads
     publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
@@ -251,10 +252,7 @@ process find_genes {
 
     """
     if grep -q ">" ${assembly}; then
-        prodigal -p meta -i ${assembly} -o ${id}.gff -d ${id}.ffn \
-             -a ${id}.faa
-        sed -i -e "s/^>/>${id}_/" ${id}.faa
-        sed -i -e "s/^>/>${id}_/" ${id}.ffn
+        prodigal -p meta -i ${assembly} -o ${id}.gff -d ${id}.ffn -a ${id}.faa
     else
         touch ${id}.faa
         touch ${id}.ffn
@@ -263,7 +261,7 @@ process find_genes {
 }
 
 process cluster_transcripts {
-    cpus max_threads/2
+    cpus params.threads/2
     publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
@@ -274,7 +272,7 @@ process cluster_transcripts {
 
     """
     cat ${transcripts} > merged.fna
-    mmseqs easy-linclust merged.fna transcripts tmp --cov-mode 0 -c ${params.overlap} --min-seq-id ${params.identity} --threads ${task.cpus}
+    mmseqs easy-linclust merged.fna transcripts tmp --cov-mode 0 -c ${params.overlap} --alignment-mode 3 -e 100 --min-seq-id ${params.identity} --threads ${task.cpus}
     mv transcripts_rep_seq.fasta transcripts.fna
     """
 }
@@ -308,18 +306,17 @@ process filter_proteins {
 }
 
 process transcript_index {
-    cpus max_threads
-    publishDir "${params.data_dir}/txn_bowtie2_index"
+    cpus params.threads
+    publishDir "${params.data_dir}/"
 
     input:
     path(txns)
 
     output:
-    path("index")
+    path("txn_salmon_index")
 
     """
-    mkdir index
-    bowtie2-build -f --threads ${task.cpus} ${txns} index/txns
+    salmon index -p ${task.cpus} -t ${txns} -i txn_salmon_index
     """
 }
 
@@ -337,13 +334,13 @@ process transcript_align {
     if (params.single_end)
         """
         bowtie2 -k 10 -p ${task.cpus} --mm --no-unal \
-            -x ${index}/txns -1 ${reads[0]} -2 ${reads[1]} | \
+            -x ${index}/txns -U ${reads} | \
             samtools view -bS - -o ${id}.bam
         """
     else
         """
         bowtie2 -k 10 -p ${task.cpus} --mm --no-unal \
-            -x ${index}/txns -U ${reads} | \
+            -x ${index}/txns -1 ${reads[0]} -2 ${reads[1]} | \
             samtools view -bS - -o ${id}.bam
         """
 }
@@ -361,6 +358,28 @@ process em_count {
     salmon quant -p ${task.cpus} -l SF -t ${genes} -a ${bam} -o ${id} &&
         mv ${id}/quant.sf ${id}.sf
     """
+}
+
+process map_and_count {
+    cpus 6
+
+    input:
+    tuple val(id), path(reads), path(json), path(html), path(index)
+
+    output:
+    path("${id}.sf")
+
+    script:
+    if (params.single_end)
+        """
+        salmon quant --meta -p ${task.cpus} -l A -i ${index} -r ${reads} -o ${id} &&
+            mv ${id}/quant.sf ${id}.sf
+        """
+    else
+        """
+        salmon quant --meta -p ${task.cpus} -l A -i ${index} -1 ${reads[0]} -2 ${reads[1]} -o ${id} &&
+            mv ${id}/quant.sf ${id}.sf
+        """
 }
 
 process merge_counts {
@@ -400,7 +419,7 @@ process merge_counts {
 }
 
 process annotate {
-    cpus max_threads
+    cpus params.threads
     publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
@@ -412,7 +431,7 @@ process annotate {
     """
     emapper.py -i ${proteins} --output proteins -m diamond \
         --data_dir ${params.eggnog_refs} \
-        --cpu ${task.cpus} --resume
+        --cpu ${task.cpus}
     """
 }
 
@@ -522,9 +541,9 @@ workflow {
 
     // count gene abundances and annotate the genes
     transcript_index(cluster_transcripts.out)
-    preprocess.out.combine(transcript_index.out) | transcript_align
-    em_count(transcript_align.out.combine(cluster_transcripts.out))
-    merge_counts(em_count.out.collect())
+    preprocess.out.combine(transcript_index.out) | map_and_count
+    // em_count(transcript_align.out.combine(cluster_transcripts.out))
+    merge_counts(map_and_count.out.collect())
     annotate(filter_proteins.out)
 
      // contig_align(preprocess.out.combine(megahit.out))

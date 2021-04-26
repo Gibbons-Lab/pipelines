@@ -64,17 +64,6 @@ process init_db {
   """
 }
 
-process download_bigg {
-  cpus 1
-
-  output:
-  path("universal_model.json")
-
-  """
-  wget http://bigg.ucsd.edu/static/namespace/universal_model.json
-  """
-}
-
 process find_genes {
   cpus 1
   publishDir "${params.data_dir}/genes", mode: "copy", overwrite: true
@@ -141,57 +130,6 @@ process build_gapseq {
     """
 }
 
-process annotate_model {
-  cpus 1
-  publishDir "${params.data_dir}/carveme_models_annotated", mode: "copy", overwrite: true
-
-  input:
-  tuple val(id), path(model), path(bigg)
-
-  output:
-  tuple val("${id}"), path("${id}.xml.gz")
-
-  """
-  #!/usr/bin/env python
-
-  import json
-  import pandas as pd
-  from collections import defaultdict
-  from cobra.io import read_sbml_model, write_sbml_model
-
-  def parse_annotation(anns):
-    parsed = defaultdict(list)
-    for _, url in anns:
-      key, id = url.replace("http://identifiers.org/", "").split("/", 1)
-      parsed[key] += [id]
-    return dict(parsed)
-
-  bigg = json.load(open("${bigg}"))
-  reactions = pd.DataFrame.from_records(bigg["reactions"])
-  reactions.index = reactions.id
-  metabolites = pd.DataFrame.from_records(bigg["metabolites"])
-  metabolites.index = metabolites.id
-
-  model = read_sbml_model("${model}")
-
-  for m in model.metabolites:
-    m.formula = m.formula.split(";")[0]
-
-  reactions = reactions[reactions.index.isin(r.id for r in model.reactions)]
-  metabolites = metabolites[metabolites.index.isin(m.id for m in model.metabolites)]
-
-  for rid, entries in reactions.iterrows():
-    rxn = model.reactions.get_by_id(rid)
-    rxn.annotation = parse_annotation(entries["annotation"])
-
-  for mid, entries in metabolites.iterrows():
-    met = model.metabolites.get_by_id(mid)
-    met.annotation = parse_annotation(entries["annotation"])
-
-  write_sbml_model(model, "${id}.xml.gz")
-  """
-}
-
 process check_model {
   cpus 1
   publishDir "${params.data_dir}/model_qualities", mode: "copy", overwrite: true
@@ -202,9 +140,15 @@ process check_model {
   output:
   tuple val("${id}"), path("${id}.html")
 
-  """
-  memote report snapshot ${model} --filename ${id}.html
-  """
+  script:
+  if (params.method == "gapseq")
+    """
+    memote report snapshot ${model} --filename ${id}.html
+    """
+  else
+    """
+    memote report snapshot ${model} --solver cplex --filename ${id}.html
+    """
 }
 
 workflow {
@@ -219,10 +163,8 @@ workflow {
   def models = null
   if (params.method == "carveme") {
     init_db()
-    download_bigg()
     find_genes(genomes)
     build_carveme(find_genes.out.combine(init_db.out))
-    //annotate_model(build_carveme.out.combine(download_bigg.out))
     models = build_carveme.out
   } else if (params.method == "gapseq") {
     build_gapseq(genomes)

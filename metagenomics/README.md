@@ -13,12 +13,22 @@
 
 1. Adapter and quality trimming with [fastp](https://github.com/OpenGene/fastp)
    *quality reports in HTML and JSON are provided for each file*
-2. Co-assembly with [MegaHit](https://github.com/voutcn/megahit)
-3. Finding genes *de novo* [prodigal](https://github.com/hyattpd/Prodigal)
-4. Transcript-level alignment with [minimap2](https://github.com/lh3/minimap2)
-5. Gene quantification (not gene expression!) with the EM counter from [salmon](https://salmon.readthedocs.io/en/latest/salmon.html)
-6. Protein annotation using the [EGGNoG mapper](https://github.com/eggnogdb/eggnog-mapper)
-7. Replication rates using [iRep](https://www.nature.com/articles/nbt.3704)
+2. Assembly with [MegaHit](https://github.com/voutcn/megahit)
+3. Finding genes *de novo* with [prodigal](https://github.com/hyattpd/Prodigal)
+4. Clustering of all transcripts
+5. Transcript-level alignment with [bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
+6. Gene quantification (not gene expression!) with the EM counter from [salmon](https://salmon.readthedocs.io/en/latest/salmon.html)
+7. Protein annotation using the [EGGNoG mapper](https://github.com/eggnogdb/eggnog-mapper)
+
+Additional workflows can be run *after* the basic workflow has finished.
+
+## Replication rates
+
+**Definition**: replication.nf
+
+1. Alignment to [~3K high quality assemblies](https://www.nature.com/articles/s41586-019-1058-x) from the gut microbiome with bowtie2
+2. extraction of coverage maps
+3. Quanitifaction of peak-to-trough ratios (PTRs) with [coptr](https://github.com/tyjo/coptr)
 
 ## Binning workflow
 
@@ -27,9 +37,9 @@
 
 ### Steps:
 
-- metagenomic binning with [Metabat2](https://bitbucket.org/berkeleylab/metabat/)
-- contig taxonomy assignment using [CAT](https://github.com/dutilh/CAT)
-- binning quality check with [BAT](https://github.com/dutilh/CAT)
+1. metagenomic binning with [Metabat2](https://bitbucket.org/berkeleylab/metabat/)
+2. assembly taxonomy assignment using [BAT](https://github.com/dutilh/CAT)
+3. quality assessment using [checkM](https://ecogenomics.github.io/CheckM/)
 
 ### Setup
 
