@@ -10,6 +10,7 @@ dependencies:
   - cobra
   - pip
   - prodigal
+  - checkm
   - pip:
     - carveme
     - memote

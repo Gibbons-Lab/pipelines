@@ -6,8 +6,7 @@ params.data_dir = "${baseDir}/data"
 params.single_end = false
 params.min_reads = 5000
 params.IGG = "/proj/gibbons/refs/IGG_v1.0_split"
-
-def max_threads = Runtime.runtime.availableProcessors()
+params.threads = 12
 
 def helpMessage() {
     log.info"""
@@ -18,11 +17,13 @@ def helpMessage() {
     > nextflow run replication.nf --resume
 
     A run with all parametrs set would look like:
-    > nextflow run main.nf --data_dir=./data --media_db=media.tsv --media="LB,M9"
+    > nextflow run main.nf --data_dir=./data --single_end true --threads 12 --min_reads 2500 --IGG /refs/IGG
 
     General options:
       --data_dir [str]              The main data directory for the analysis (must contain `raw`).
       --single_end [bool]           Whether the data is single-end sequencing data.
+      --threads [int]               The maximum number of threads a single process can use.
+                                    This is not the same as the maximum number of total threads used.
 
     COPTR options:
       --min_reads [int]             Minimum number of reads for a genome to calculate PTRs.
@@ -87,27 +88,59 @@ process extract_coverage {
   tuple val(id), path(bam), path(coptr)
 
   output:
-  path("coverage/${id}.cm.pkl")
+  path("coverage/*.*")
 
   """
   mkdir coverage
-  python ${coptr}/coptr.py extract . coveraged
+  python ${coptr}/coptr.py extract . coverage
   """
 }
 
 process estimate_ptr {
-  cpus max_threads
+  cpus params.threads
   publishDir "${params.data_dir}",  mode: "copy", overwrite: true
 
   input:
-  tuple path(coverage), path(coptr)
+  path(coverage)
+  path(coptr)
 
   output:
   path("rates.csv")
 
   """
-  python ${coptr}/coptr.py estimate . rates.csv --min-reads ${params.min_reads}
+  python ${coptr}/coptr.py estimate --min-reads ${params.min_reads} --threads ${task.cpus} . rates.csv
   """
+}
+
+process annotate_ptr {
+  cpus 1
+  publishDir "${params.data_dir}",  mode: "copy", overwrite: true
+
+  input:
+  path(rates)
+
+  output:
+  path("annotated_rates.csv")
+
+  shell:
+  '''
+  #!/usr/bin/env python
+
+  import pandas as pd
+
+  rates = pd.read_csv("!{rates}")
+  meta = pd.read_csv("http://bit.ly/IGG_species_info_23790", sep="\t")
+  rates.rename(columns={"log2(PTR):genome_id/sample_id": "genome_id"}, inplace=True)
+  rates = rates.melt(id_vars="genome_id", var_name="sample_id", value_name="log2_ptr").dropna()
+  rates["representative_genome"] = rates.genome_id.str.replace("\\.\\w+$", "", regex=True)
+
+  taxa = meta.gtdb_taxonomy.str.replace("\\w__", "", regex=True).str.split(";", expand=True)
+  taxa.columns = ["kingdom", "phylum", "class", "order", "family", "genus", "species"]
+  meta = pd.concat([meta, taxa], axis=1)
+
+  merged = pd.merge(rates, meta, on="representative_genome")
+  merged.to_csv("annotated_rates.csv", index=False)
+  '''
 }
 
 workflow {
@@ -131,5 +164,5 @@ workflow {
     download_coptr()
     reads.combine(download_coptr.out) | map_reads
     map_reads.out.combine(download_coptr.out) | extract_coverage
-    extract_coverage.out.collect().combine(download_coptr.out) | estimate_ptr
+    estimate_ptr(extract_coverage.out.collect(), download_coptr.out) | annotate_ptr
 }

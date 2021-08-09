@@ -272,7 +272,7 @@ process cluster_transcripts {
 
     """
     cat ${transcripts} > merged.fna
-    mmseqs easy-linclust merged.fna transcripts tmp --cov-mode 0 -c ${params.overlap} --alignment-mode 3 -e 100 --min-seq-id ${params.identity} --threads ${task.cpus}
+    mmseqs easy-linclust merged.fna transcripts tmp --cov-mode 0 -c ${params.overlap} --min-seq-id ${params.identity} --threads ${task.cpus}
     mv transcripts_rep_seq.fasta transcripts.fna
     """
 }
@@ -384,7 +384,7 @@ process map_and_count {
 
 process merge_counts {
     cpus 1
-    storeDir "${params.data_dir}", mode: "copy", overwrite: true
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
     path(salmon_quants)
@@ -399,22 +399,22 @@ process merge_counts {
     from loguru import logger as loggy
     from os import path
     import pandas as pd
+    import gzip
 
-    read = []
     paths = "${salmon_quants}"
     paths = paths.split(" ")
-    for p in paths:
-        sample = path.splitext(path.basename(p))[0]
-        loggy.info("Processing sample {}...", sample)
-        counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
+    with gzip.open("function_counts.csv.gz", "ab") as gzf:
+        for p in paths:
+            sample = path.splitext(path.basename(p))[0]
+            loggy.info("Processing sample {}...", sample)
+            counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
 
-        counts.columns = [
-            "locus_tag", "length", "effective_length", "tpm", "reads"]
-        counts["sample"] = sample
-        read.append(counts)
-    read = pd.concat(read)
-    loggy.info("writing compressed output")
-    read.to_csv("function_counts.csv.gz", index=False)
+            counts.columns = [
+                "locus_tag", "length", "effective_length", "tpm", "reads"]
+            counts["sample_id"] = sample
+            loggy.info("writing compressed output for sample {}...", sample)
+            counts.to_csv(gzf, header=path.exists("function_counts.csv.gz"),
+                          index=False)
     """
 }
 
@@ -429,9 +429,12 @@ process annotate {
     path("proteins.emapper.annotations")
 
     """
+    rm -rf /tmp/eggnog_results
+    mkdir /tmp/eggnog_results
     emapper.py -i ${proteins} --output proteins -m diamond \
-        --data_dir ${params.eggnog_refs} \
+        --data_dir ${params.eggnog_refs} --scratch_dir /tmp/eggnog_results --temp_dir /tmp \
         --cpu ${task.cpus}
+    rm -rf /tmp/eggnog_results
     """
 }
 
@@ -508,7 +511,8 @@ workflow {
         Channel
             .fromFilePairs([
                 "${params.data_dir}/raw/*_R{1,2}_001.fastq.gz",
-                "${params.data_dir}/raw/*_{1,2}.fastq.gz"
+                "${params.data_dir}/raw/*_{1,2}.fastq.gz",
+                "${params.data_dir}/raw/*_R{1,2}.fastq.gz"
             ])
             .ifEmpty { error "Cannot find any read files in ${params.data_dir}!" }
             .set{raw}

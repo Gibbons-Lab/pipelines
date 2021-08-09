@@ -4,6 +4,7 @@ channels:
   - bioconda
   - defaults
 dependencies:
+  - python>=3.8
   - nextflow>=20.10.0
   - fastp
   - megahit
@@ -19,11 +20,12 @@ dependencies:
   - samtools
   - multiqc
   - biopython
+  - mmseqs2
   - bioconda::cat
   - pip
   - matplotlib
   - numpy
-  - pysam
   - scipy
+  - pysam
   - pip:
     - eggnog-mapper

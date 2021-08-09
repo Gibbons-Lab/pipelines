@@ -6,6 +6,7 @@ params.data_dir = "${baseDir}/data"
 params.media_db = null
 params.media = null
 params.method = "carveme"
+params.threads = 12
 
 
 def helpMessage() {
@@ -80,6 +81,22 @@ process find_genes {
   """
 }
 
+process checkm {
+  cpus params.threads
+  publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+  input:
+  path(proteins)
+
+  output:
+  path("checkm_summary.tsv")
+
+  """
+  checkm lineage_wf --genes -t ${task.cpus} -x faa . checkm
+  checkm qa checkm/lineage.ms checkm --tab_table -f checkm_summary.tsv
+  """
+}
+
 process build_carveme {
   cpus 2
   publishDir "${params.data_dir}/carveme_models", mode: "copy", overwrite: true
@@ -88,22 +105,22 @@ process build_carveme {
   tuple val(id), path(genes_dna), path(genes_aa), path(db_info)
 
   output:
-  tuple val("${id}"), path("${id}_draft.xml.gz")
+  tuple val("${id}"), path("${id}.xml.gz")
 
   script:
   if (params.media_db && params.media)
     """
-    carve ${genes_aa} -o "${id}_draft".xml.gz --mediadb ${params.media_db} \
+    carve ${genes_aa} -o ${id}.xml.gz --mediadb ${params.media_db} \
           --gapfill ${params.media} --diamond-args "-p ${task.cpus}" --fbc2 -v
     """
   else if (params.media)
     """
-    carve ${genes_aa} -o "${id}_draft".xml.gz --gapfill ${params.media} \
+    carve ${genes_aa} -o ${id}.xml.gz --gapfill ${params.media} \
           --diamond-args "-p ${task.cpus}" --fbc2 -v
     """
   else
     """
-    carve ${genes_aa} -o "${id}_draft".xml.gz --diamond-args "-p ${task.cpus}" --fbc2 -v
+    carve ${genes_aa} -o ${id}.xml.gz --diamond-args "-p ${task.cpus}" --fbc2 -v
     """
 }
 
@@ -160,10 +177,11 @@ workflow {
     .map{row -> tuple(row.baseName.split("\\.f")[0], tuple(row))}
     .set{genomes}
 
+  find_genes(genomes)
+
   def models = null
   if (params.method == "carveme") {
     init_db()
-    find_genes(genomes)
     build_carveme(find_genes.out.combine(init_db.out))
     models = build_carveme.out
   } else if (params.method == "gapseq") {
@@ -172,5 +190,7 @@ workflow {
   } else {
     error "Method must be either `carveme` or `gapseq`."
   }
+
+  checkm(find_genes.out.map{prots -> prots[2]}.collect())
   check_model(models)
 }
