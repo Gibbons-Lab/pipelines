@@ -114,7 +114,7 @@ process kraken {
         """
         kraken2 --db ${params.kraken2_db} --paired \
             --threads ${task.cpus} --gzip-compressed --output ${id}.k2 \
-            --memory-mapping --report ${id}.tsv ${reads[0]} ${reads[1]}
+            --memory-mapping --report ${id}.tsv  ${reads[0]} ${reads[1]}
         """
 }
 
@@ -156,9 +156,19 @@ process merge_taxonomy {
     import pandas as pd
     import re
 
+    ranks = pd.Series({
+        "k": "kingdom",
+        "p": "phylum",
+        "c": "class",
+        "o": "order",
+        "f": "family",
+        "g": "genus",
+        "s": "species"
+    })
+
     def str_to_taxa(taxon):
         taxon = taxon.split("|")
-        taxa = pd.Series({t.split("__")[0]: t.split("__")[1] for t in taxon})
+        taxa = pd.Series({ranks[t.split("__")[0]]: t.split("__")[1] for t in taxon})
         return taxa
 
     read = []
@@ -174,7 +184,7 @@ process merge_taxonomy {
         except pd.errors.EmptyDataError:
             continue
         counts = counts[counts.iloc[:, 0].str.contains(
-            str(lev).lower() + "_")]
+            str("k" if lev == "D" else lev).lower() + "_")]
         taxa = counts.iloc[:, 0].apply(str_to_taxa)
         taxa["reads"] = counts.iloc[:, 1]
         taxa["sample"] = id
@@ -404,7 +414,7 @@ process merge_counts {
     paths = "${salmon_quants}"
     paths = paths.split(" ")
     with gzip.open("function_counts.csv.gz", "ab") as gzf:
-        for p in paths:
+        for i, p in enumerate(paths):
             sample = path.splitext(path.basename(p))[0]
             loggy.info("Processing sample {}...", sample)
             counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
@@ -413,7 +423,7 @@ process merge_counts {
                 "locus_tag", "length", "effective_length", "tpm", "reads"]
             counts["sample_id"] = sample
             loggy.info("writing compressed output for sample {}...", sample)
-            counts.to_csv(gzf, header=path.exists("function_counts.csv.gz"),
+            counts.to_csv(gzf, header=(i==0),
                           index=False)
     """
 }

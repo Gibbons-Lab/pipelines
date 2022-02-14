@@ -105,22 +105,28 @@ process build_carveme {
   tuple val(id), path(genes_dna), path(genes_aa), path(db_info)
 
   output:
-  tuple val("${id}"), path("${id}.xml.gz")
+  tuple val("${id}"), path("${id}.xml.gz"), path("${id}.log")
 
   script:
   if (params.media_db && params.media)
     """
+    CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
     carve ${genes_aa} -o ${id}.xml.gz --mediadb ${params.media_db} \
-          --gapfill ${params.media} --diamond-args "-p ${task.cpus}" --fbc2 -v
+          --gapfill ${params.media} --diamond-args "-p ${task.cpus}" \
+          --fbc2 -v > ${id}.log
     """
   else if (params.media)
     """
+    CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
     carve ${genes_aa} -o ${id}.xml.gz --gapfill ${params.media} \
-          --diamond-args "-p ${task.cpus}" --fbc2 -v
+          --diamond-args "-p ${task.cpus}" \
+          --fbc2 -v > ${id}.log
     """
   else
     """
-    carve ${genes_aa} -o ${id}.xml.gz --diamond-args "-p ${task.cpus}" --fbc2 -v
+    CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
+    carve ${genes_aa} -o ${id}.xml.gz --diamond-args "-p ${task.cpus}" \
+      --fbc2 -v > ${id}.log
     """
 }
 
@@ -132,17 +138,17 @@ process build_gapseq {
   tuple val(id), path(assembly)
 
   output:
-  tuple val("${id}"), path("${id}.xml.gz")
+  tuple val("${id}"), path("${id}.xml.gz"), path("${id}.log")
 
   script:
   if (params.media_db)
     """
-    gapseq -n doall ${assembly} ${params.media_db}
+    gapseq -n doall ${assembly} ${params.media_db} > ${id}.log
     gzip ${id}.xml
     """
   else
     """
-    gapseq -n doall ${assembly} /opt/gapseq/data/media/gut.csv
+    gapseq -n doall ${assembly} /opt/gapseq/data/media/gut.csv > ${id}.log
     gzip ${id}.xml
     """
 }
@@ -152,20 +158,105 @@ process check_model {
   publishDir "${params.data_dir}/model_qualities", mode: "copy", overwrite: true
 
   input:
-  tuple val(id), path(model)
+  tuple val(id), path(model), path(log)
 
   output:
-  tuple val("${id}"), path("${id}.html")
+  tuple val("${id}"), path("${id}.html.gz")
 
   script:
   if (params.method == "gapseq")
     """
+    CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
     memote report snapshot ${model} --filename ${id}.html
+    gzip ${id}.html
     """
   else
     """
+    CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
     memote report snapshot ${model} --solver cplex --filename ${id}.html
+    gzip ${id}.html
     """
+}
+
+process carveme_fba {
+  cpus 1
+
+  input:
+  tuple val(id), path(model), path(log)
+
+  output:
+  tuple val(id), path("${id}_exchanges.csv"), path("${id}_growth_rate.csv")
+
+  """
+  #!/usr/bin/env python3
+
+  import cobra
+  import pandas as pd
+  from carveme import project_dir
+  from os import path
+
+  model = cobra.io.read_sbml_model("${model}")
+
+  exids = [r.id for r in model.exchanges]
+  if "${params.media}" != "null":
+    if "${params.media_db}" == "null":
+      media_df = pd.read_csv(
+        path.join(project_dir, "${model}", "input", "media_db.tsv"), sep="\\t")
+    else:
+      media_df = pd.read_csv("${params.media_db}", sep="\\t")
+    mname = "${params.media}".split(",")[0]
+    media_df = media_df[media_df.medium == mname]
+    if "flux" not in media_df.columns:
+      media_df["flux"] = 0.1
+    if "reaction" not in media_df.columns:
+      media_df["reaction"] = "EX_" + media_df["compound"] + "_e"
+    media_df.index = media_df.reaction
+    model.medium = media_df.flux[media_df.index.isin(exids)]
+
+  rate = pd.DataFrame({"id": "${id}", "growth_rate": model.slim_optimize()}, index=[0])
+  sol = cobra.flux_analysis.pfba(model)
+  ex_fluxes = sol.fluxes[
+    sol.fluxes.index.isin(exids)
+    & (sol.fluxes.abs() > model.tolerance)
+  ]
+  met_names = ex_fluxes.index.to_series().apply(
+    lambda idx: model.metabolites.get_by_id(idx.replace("EX_", "")).name)
+  exchanges = pd.DataFrame({
+    "assembly": "${id}",
+    "reaction": ex_fluxes.index,
+    "flux": ex_fluxes,
+    "description": met_names
+  })
+  rate.to_csv("${id}_growth_rate.csv", index=False)
+  exchanges.to_csv("${id}_exchanges.csv", index=False)
+  """
+}
+
+process summarize_fba {
+  cpus params.threads
+  publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+  input:
+  path(exchanges)
+  path(rates)
+
+  output:
+  tuple path("exchanges.csv"), path("growth_rates.csv")
+
+  """
+  #!/usr/bin/env python3
+
+  import pandas as pd
+  import glob
+
+  res = map(pd.read_csv, glob.glob("*_exchanges.csv"))
+  exchanges = pd.concat(res)
+  exchanges.to_csv("exchanges.csv", index=False)
+
+  res = map(pd.read_csv, glob.glob("*_growth_rate.csv"))
+  growth_rates = pd.concat(list(res))
+  growth_rates.to_csv("growth_rates.csv", index=False)
+  """
 }
 
 workflow {
@@ -184,6 +275,10 @@ workflow {
     init_db()
     build_carveme(find_genes.out.combine(init_db.out))
     models = build_carveme.out
+    models | carveme_fba
+    exchanges = carveme_fba.out.map{it -> it[1]}.collect()
+    rates = carveme_fba.out.map{it -> it[2]}.collect()
+    summarize_fba(exchanges, rates)
   } else if (params.method == "gapseq") {
     build_gapseq(genomes)
     models = build_gapseq.out

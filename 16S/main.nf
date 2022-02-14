@@ -6,11 +6,14 @@ params.merge = true
 params.min_overlap = 8
 params.forward_only = false
 params.data_dir = "${baseDir}/data"
-max_cpus = 24
+params.taxa_db = "/proj/gibbons/refs/silva_nr99_v138.1_train_set.fa.gz"
+params.species_db = "/proj/gibbons/refs/silva_species_assignment_v138.1.fa.gz"
+params.threads = 16
+params.pattern = "illumina"
 
 process quality_control {
-    publishDir "${params.data_dir}"
-    cpus max_cpus
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+    cpus params.threads
 
     output:
     tuple path("manifest.csv"), path("qc.rds"), path("qualities.png") into qc
@@ -19,7 +22,12 @@ process quality_control {
     #!/usr/bin/env Rscript
     library(mbtools)
 
-    files <- find_read_files("${params.data_dir}/raw", dirs_are_runs = T)
+    files <- find_read_files(
+        "${params.data_dir}/raw",
+        pattern = mbtools:::${params.pattern}_pattern,
+        annotations = mbtools:::${params.pattern}_annotations,
+        dirs_are_runs = T
+    )
 
     if (${params.forward_only ? "T" : "F"}) {
         files[, "reverse" := NULL]
@@ -36,7 +44,7 @@ process quality_control {
 
 process trim {
     publishDir "${params.data_dir}"
-    cpus max_cpus
+    cpus params.threads
 
     input:
     tuple path(manifest), path(qc), path(pl) from qc
@@ -63,8 +71,8 @@ process trim {
 }
 
 process denoise {
-    publishDir "${params.data_dir}"
-    cpus max_cpus
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+    cpus params.threads
 
     input:
     tuple path(procced), path(artifact) from processed
@@ -84,7 +92,9 @@ process denoise {
         hash = T,
         threads = ${task.cpus},
         merge = ${params.merge ? "T" : "F"},
-        min_overlap = ${params.min_overlap}
+        min_overlap = ${params.min_overlap},
+        taxa_db = "${params.taxa_db}",
+        species_db = "${params.species_db}"
     )
     saveRDS(denoised, "denoised.rds")
     fwrite(denoised[["passed_reads"]], "read_stats.csv")
@@ -96,7 +106,7 @@ process denoise {
 }
 
 process tables {
-    publishDir "${params.data_dir}"
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
     cpus 1
 
     input:

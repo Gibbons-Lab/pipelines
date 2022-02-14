@@ -38,25 +38,12 @@ if (params.help) {
     exit 0
 }
 
-process download_coptr {
-    cpus 1
-
-    output:
-    path("coptr")
-
-    """
-    wget https://github.com/tyjo/coptr/archive/refs/heads/master.zip
-    unzip master.zip
-    mv coptr-master coptr
-    """
-}
-
 process map_reads {
     cpus 4
     publishDir "${params.data_dir}/alignments"
 
     input:
-    tuple val(id), path(reads), path(coptr)
+    tuple val(id), path(reads)
 
     output:
     tuple val(id), path("${id}.bam")
@@ -66,17 +53,17 @@ process map_reads {
         """
       mkdir files bam1 bam2
       (cd files && ln -s ../${reads[0]} ${id}_1.fastq.gz)
-      python ${coptr}/coptr.py map --threads ${task.cpus} ${params.IGG}/IGG_v1.0-1 files bam1
-      python ${coptr}/coptr.py map --threads ${task.cpus} ${params.IGG}/IGG_v1.0-2 files bam2
-      python ${coptr}/coptr.py merge bam1/*.bam bam2/*.bam ${id}.bam
+      coptr map --threads ${task.cpus} ${params.IGG}/IGG_v1.0-1 files bam1
+      coptr map --threads ${task.cpus} ${params.IGG}/IGG_v1.0-2 files bam2
+      coptr merge bam1/*.bam bam2/*.bam ${id}.bam
       """
     else
       """
       mkdir files bam1 bam2
       (cd files && ln -s ../${reads[0]} ${id}_1.fastq.gz && ln -s ../${reads[1]} ${id}_2.fastq.gz)
-      python ${coptr}/coptr.py map --threads ${task.cpus} --paired ${params.IGG}/IGG_v1.0-1 files bam1
-      python ${coptr}/coptr.py map --threads ${task.cpus} --paired ${params.IGG}/IGG_v1.0-2 files bam2
-      python ${coptr}/coptr.py merge bam1/*.bam bam2/*.bam ${id}.bam
+      coptr map --threads ${task.cpus} --paired ${params.IGG}/IGG_v1.0-1 files bam1
+      coptr map --threads ${task.cpus} --paired ${params.IGG}/IGG_v1.0-2 files bam2
+      coptr merge bam1/*.bam bam2/*.bam ${id}.bam
       """
 }
 
@@ -85,14 +72,14 @@ process extract_coverage {
   publishDir "${params.data_dir}/coverage"
 
   input:
-  tuple val(id), path(bam), path(coptr)
+  tuple val(id), path(bam)
 
   output:
   path("coverage/*.*")
 
   """
   mkdir coverage
-  python ${coptr}/coptr.py extract . coverage
+  coptr extract . coverage
   """
 }
 
@@ -102,13 +89,12 @@ process estimate_ptr {
 
   input:
   path(coverage)
-  path(coptr)
 
   output:
   path("rates.csv")
 
   """
-  python ${coptr}/coptr.py estimate --min-reads ${params.min_reads} --threads ${task.cpus} . rates.csv
+  coptr estimate --min-reads ${params.min_reads} --threads ${task.cpus} . rates.csv
   """
 }
 
@@ -161,8 +147,6 @@ workflow {
             .set{reads}
     }
 
-    download_coptr()
-    reads.combine(download_coptr.out) | map_reads
-    map_reads.out.combine(download_coptr.out) | extract_coverage
-    estimate_ptr(extract_coverage.out.collect(), download_coptr.out) | annotate_ptr
+    reads | map_reads | extract_coverage
+    estimate_ptr(extract_coverage.out.collect()) | annotate_ptr
 }

@@ -29,3 +29,4 @@ dependencies:
   - pysam
   - pip:
     - eggnog-mapper
+    - git+https://github.com/tyjo/coptr
