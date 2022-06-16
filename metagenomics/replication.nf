@@ -52,7 +52,7 @@ process map_reads {
     if (params.single_end)
         """
       mkdir files bam1 bam2
-      (cd files && ln -s ../${reads[0]} ${id}_1.fastq.gz)
+      (cd files && ln -s ../${reads[0]} reads_1.fastq.gz)
       coptr map --threads ${task.cpus} ${params.IGG}/IGG_v1.0-1 files bam1
       coptr map --threads ${task.cpus} ${params.IGG}/IGG_v1.0-2 files bam2
       coptr merge bam1/*.bam bam2/*.bam ${id}.bam
@@ -60,7 +60,7 @@ process map_reads {
     else
       """
       mkdir files bam1 bam2
-      (cd files && ln -s ../${reads[0]} ${id}_1.fastq.gz && ln -s ../${reads[1]} ${id}_2.fastq.gz)
+      (cd files && ln -s ../${reads[0]} reads_1.fastq.gz && ln -s ../${reads[1]} reads_2.fastq.gz)
       coptr map --threads ${task.cpus} --paired ${params.IGG}/IGG_v1.0-1 files bam1
       coptr map --threads ${task.cpus} --paired ${params.IGG}/IGG_v1.0-2 files bam2
       coptr merge bam1/*.bam bam2/*.bam ${id}.bam
@@ -84,7 +84,7 @@ process extract_coverage {
 }
 
 process estimate_ptr {
-  cpus params.threads
+  cpus 1
   publishDir "${params.data_dir}",  mode: "copy", overwrite: true
 
   input:
@@ -94,7 +94,7 @@ process estimate_ptr {
   path("rates.csv")
 
   """
-  coptr estimate --min-reads ${params.min_reads} --threads ${task.cpus} . rates.csv
+  coptr estimate --min-reads ${params.min_reads} . rates.csv
   """
 }
 

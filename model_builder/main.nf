@@ -143,12 +143,13 @@ process build_gapseq {
   script:
   if (params.media_db)
     """
-    gapseq -n doall ${assembly} ${params.media_db} > ${id}.log
+    cp ${baseDir}/${params.media_db} medium.csv
+    gapseq doall ${assembly} medium.csv > ${id}.log
     gzip ${id}.xml
     """
   else
     """
-    gapseq -n doall ${assembly} /opt/gapseq/data/media/gut.csv > ${id}.log
+    gapseq doall ${assembly} /opt/gapseq/dat/media/gut.csv > ${id}.log
     gzip ${id}.xml
     """
 }
@@ -268,17 +269,17 @@ workflow {
     .map{row -> tuple(row.baseName.split("\\.f")[0], tuple(row))}
     .set{genomes}
 
-  find_genes(genomes)
-
   def models = null
   if (params.method == "carveme") {
     init_db()
+    find_genes(genomes)
     build_carveme(find_genes.out.combine(init_db.out))
     models = build_carveme.out
     models | carveme_fba
     exchanges = carveme_fba.out.map{it -> it[1]}.collect()
     rates = carveme_fba.out.map{it -> it[2]}.collect()
     summarize_fba(exchanges, rates)
+    checkm(find_genes.out.map{prots -> prots[2]}.collect())
   } else if (params.method == "gapseq") {
     build_gapseq(genomes)
     models = build_gapseq.out
@@ -286,6 +287,5 @@ workflow {
     error "Method must be either `carveme` or `gapseq`."
   }
 
-  checkm(find_genes.out.map{prots -> prots[2]}.collect())
   check_model(models)
 }

@@ -157,7 +157,7 @@ process merge_taxonomy {
     import re
 
     ranks = pd.Series({
-        "k": "kingdom",
+        "d": "kingdom",
         "p": "phylum",
         "c": "class",
         "o": "order",
@@ -168,7 +168,7 @@ process merge_taxonomy {
 
     def str_to_taxa(taxon):
         taxon = taxon.split("|")
-        taxa = pd.Series({ranks[t.split("__")[0]]: t.split("__")[1] for t in taxon})
+        taxa = pd.Series({ranks[t.split("_")[0]]: t.split("_")[1] for t in taxon})
         return taxa
 
     read = []
@@ -184,7 +184,7 @@ process merge_taxonomy {
         except pd.errors.EmptyDataError:
             continue
         counts = counts[counts.iloc[:, 0].str.contains(
-            str("k" if lev == "D" else lev).lower() + "_")]
+            str("d" if lev == "D" else lev).lower() + "_")]
         taxa = counts.iloc[:, 0].apply(str_to_taxa)
         taxa["reads"] = counts.iloc[:, 1]
         taxa["sample"] = id
@@ -559,9 +559,4 @@ workflow {
     // em_count(transcript_align.out.combine(cluster_transcripts.out))
     merge_counts(map_and_count.out.collect())
     annotate(filter_proteins.out)
-
-     // contig_align(preprocess.out.combine(megahit.out))
-    // replication_rates(contig_align.out)
-    // merge_rates(replication_rates.out.collect())
-
 }
