@@ -16,7 +16,7 @@ process quality_control {
     cpus params.threads
 
     output:
-    tuple path("manifest.csv"), path("qc.rds"), path("qualities.png") into qc
+    tuple path("manifest.csv"), path("qc.rds"), path("qualities.png")
 
     """
     #!/usr/bin/env Rscript
@@ -47,21 +47,28 @@ process trim {
     cpus params.threads
 
     input:
-    tuple path(manifest), path(qc), path(pl) from qc
+    tuple path(manifest), path(qc), path(pl)
 
     output:
-    tuple path("preprocessed"), path("preprocessed.rds") into processed
+    tuple path("preprocessed"), path("preprocessed.rds")
 
     """
     #!/usr/bin/env Rscript
     library(mbtools)
 
     qc <- readRDS("${qc}")
+    manifest <- fread("${manifest}")
+
+    if ("reverse" %in% names(manifest)) {
+        trunc <- c(${params.trunc_forward}, ${params.trunc_reverse})
+    } else {
+        trunc <- ${params.trunc_forward}
+    }
+
     procced <- preprocess(
         qc,
         trimLeft = ${params.trim_left},
-        truncLen = ${params.forward_only ? "${params.trunc_forward}" :
-                     "c(${params.trunc_forward}, ${params.trunc_reverse})"},
+        truncLen = trunc,
         maxEE = ${params.maxEE},
         out_dir = "preprocessed",
         threads = ${task.cpus}
@@ -75,11 +82,11 @@ process denoise {
     cpus params.threads
 
     input:
-    tuple path(procced), path(artifact) from processed
+    tuple path(procced), path(artifact)
 
     output:
     tuple path("phyloseq.rds"), path("read_stats.csv"),
-          path("denoised.rds") into denoised
+          path("denoised.rds")
 
     """
     #!/usr/bin/env Rscript
@@ -110,10 +117,10 @@ process tables {
     cpus 1
 
     input:
-    tuple path(ps), path(stats), path(arti) from denoised
+    tuple path(ps), path(stats), path(arti)
 
     output:
-    tuple path("asvs.csv"), path("taxonomy.csv") into tabled
+    tuple path("asvs.csv"), path("taxonomy.csv")
 
     """
     #!/usr/bin/env Rscript
@@ -129,4 +136,8 @@ process tables {
     tax <- as.data.table(denoised[["taxonomy"]])[, "id" := ids]
     fwrite(tax, "taxonomy.csv")
     """
+}
+
+workflow {
+    quality_control | trim | denoise | tables
 }

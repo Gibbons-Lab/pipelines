@@ -3,8 +3,8 @@
 nextflow.enable.dsl = 2
 
 params.data_dir = "${baseDir}/data"
-params.refs = "/proj/gibbons/refs/"
-params.eggnog_refs = "/tmp/eggnog"
+params.refs = "${baseDir}/refs"
+params.eggnog_refs = "${params.refs}/eggnog"
 params.kraken2_db = "${params.refs}/kraken2_default"
 
 params.single_end = false
@@ -129,7 +129,7 @@ process count_taxa {
 
     """
     mkdir ${lev} && cp ${report} ${lev}/${report} && \
-        bracken -d /proj/gibbons/refs/kraken2_default -i ${lev}/${report} \
+        bracken -d ${params.kraken2_db} -i ${lev}/${report} \
         -l ${lev} -o ${lev}/${id}.b2 -r ${params.read_length} \
         -t ${params.threshold} -w ${lev}/${id}_bracken.tsv && \
         kreport2mpa.py -r ${lev}/${id}_bracken.tsv -o ${lev}/${id}_bracken_mpa.tsv \
@@ -371,7 +371,7 @@ process em_count {
 }
 
 process map_and_count {
-    cpus 6
+    cpus 8
 
     input:
     tuple val(id), path(reads), path(json), path(html), path(index)
@@ -383,12 +383,12 @@ process map_and_count {
     if (params.single_end)
         """
         salmon quant --meta -p ${task.cpus} -l A -i ${index} -r ${reads} -o ${id} &&
-            mv ${id}/quant.sf ${id}.sf
+            mv ${id}/quant.sf ${id}.sf || touch ${id}.sf
         """
     else
         """
         salmon quant --meta -p ${task.cpus} -l A -i ${index} -1 ${reads[0]} -2 ${reads[1]} -o ${id} &&
-            mv ${id}/quant.sf ${id}.sf
+            mv ${id}/quant.sf ${id}.sf || touch ${id}.sf
         """
 }
 
@@ -417,7 +417,10 @@ process merge_counts {
         for i, p in enumerate(paths):
             sample = path.splitext(path.basename(p))[0]
             loggy.info("Processing sample {}...", sample)
-            counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
+            try:
+                counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
+            except Exception:
+                continue
 
             counts.columns = [
                 "locus_tag", "length", "effective_length", "tpm", "reads"]
