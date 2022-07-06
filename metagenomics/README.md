@@ -59,7 +59,7 @@ A run using all,default parameters can be started with:
 > nextflow run main.nf --resume
 
 A run with all parametrs set would look like:
-> nextflow run main.nf --data_dir=./data --single_end=false --refs=/my/references --single_end=false \
+> nextflow run main.nf --data_dir=./data --refs=/my/references --single_end=false \
                        --trim_front=5 --min_length=50 --quality_threshold=20 --read_length=150 --threshold=10
 
 General options:
@@ -74,6 +74,6 @@ Quality filter:
   --trim_front [str]            How many bases to trim from the 5' end of each read.
   --min_length [str]            Minimum accepted length for a read.
   --quality_threshold [str]     Smallest acceptable average quality.
-  --threshold [str]             Smallest abundance threshold used by Kraken.
+  --threshold [str]             Smallest abundance threshold (in reads) used by Kraken.
 ```
 
