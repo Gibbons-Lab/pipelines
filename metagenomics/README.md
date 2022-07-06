@@ -15,9 +15,9 @@
    *quality reports in HTML and JSON are provided for each file*
 2. Assembly with [MegaHit](https://github.com/voutcn/megahit)
 3. Finding genes *de novo* with [prodigal](https://github.com/hyattpd/Prodigal)
-4. Clustering of all transcripts
-5. Transcript-level alignment with [bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
-6. Gene quantification (not gene expression!) with the EM counter from [salmon](https://salmon.readthedocs.io/en/latest/salmon.html)
+4. Clustering of all genes
+5. Pufferfish mapping index creation (needed for next step)  
+6. Gene quantification (mapping + counting) with [salmon](https://salmon.readthedocs.io/en/latest/salmon.html)
 7. Protein annotation using the [EGGNoG mapper](https://github.com/eggnogdb/eggnog-mapper)
 
 Additional workflows can be run *after* the basic workflow has finished.
