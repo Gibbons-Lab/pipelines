@@ -151,7 +151,6 @@ process merge_taxonomy {
     #!/usr/bin/env python
 
     from sys import stdin
-    from loguru import logger as loggy
     from os import path
     import pandas as pd
     import re
@@ -177,7 +176,7 @@ process merge_taxonomy {
     paths = input.split(",")
 
     for p in paths:
-        loggy.warning(p)
+        print(f"processing {p}...")
         id = re.findall("(.+)_bracken_mpa.tsv", p)[0]
         try:
             counts = pd.read_csv(p, sep="\t", header=None)
@@ -299,19 +298,19 @@ process filter_proteins {
     path("proteins.faa")
 
     """
-    #!/usr/bin/env Rscript
+    #!/usr/bin/env python
 
-    library(Biostrings)
+    from Bio import SeqIO
+    import os
 
-    proteins <- "${proteins}"
-    system2("cat", c(strsplit(proteins, " ")[[1]], ">", "merged.faa"))
-
-    txns <- fasta.index("${transcripts}")
-    txn_ids <- trimws(txns[["desc"]])
-    prots <- readAAStringSet("merged.faa")
-    prot_ids <- trimws(names(prots))
-    names(prots) <- prot_ids
-    writeXStringSet(prots[prot_ids %in% txn_ids], "proteins.faa")
+    os.system("cat ${proteins} > merged.faa")
+    transcript_ids=[record.name for record in SeqIO.parse("${transcripts}","fasta")]
+    protein_itr = (
+        record
+        for record in SeqIO.parse("merged.faa","fasta")
+        if record.name in transcript_ids
+    )
+    SeqIO.write(protein_itr, "proteins.faa", "fasta")
     """
 }
 
@@ -406,7 +405,6 @@ process merge_counts {
     #!/usr/bin/env python
 
     from sys import stdin
-    from loguru import logger as loggy
     from os import path
     import pandas as pd
     import gzip
@@ -425,7 +423,7 @@ process merge_counts {
             counts.columns = [
                 "locus_tag", "length", "effective_length", "tpm", "reads"]
             counts["sample_id"] = sample
-            loggy.info("writing compressed output for sample {}...", sample)
+            print(f"writing compressed output for sample {sample}...")
             counts.to_csv(gzf, header=(i==0),
                           index=False)
     """

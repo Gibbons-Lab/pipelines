@@ -2,11 +2,15 @@
 
 nextflow.enable.dsl = 2
 
+params.genomes = "${baseDir}/data/genomes.csv"
 params.data_dir = "${baseDir}/data"
 params.media_db = null
 params.media = null
 params.method = "carveme"
 params.threads = 12
+params.gapseq_bad_score = 100
+params.gapseq_good_score = 200
+params.simulate = false
 
 
 def helpMessage() {
@@ -70,7 +74,7 @@ process find_genes {
   publishDir "${params.data_dir}/genes", mode: "copy", overwrite: true
 
   input:
-  tuple val(id), path(assembly)
+  tuple val(id), val(domain), path(assembly)
 
   output:
   tuple val("${id}"), path("${id}.ffn"), path("${id}.faa")
@@ -78,22 +82,6 @@ process find_genes {
   """
   prodigal -p single -i ${assembly} -o ${id}.gff -d ${id}.ffn \
            -a ${id}.faa
-  """
-}
-
-process checkm {
-  cpus params.threads
-  publishDir "${params.data_dir}", mode: "copy", overwrite: true
-
-  input:
-  path(proteins)
-
-  output:
-  path("checkm_summary.tsv")
-
-  """
-  checkm lineage_wf --genes -t ${task.cpus} -x faa . checkm
-  checkm qa checkm/lineage.ms checkm --tab_table -f checkm_summary.tsv
   """
 }
 
@@ -131,25 +119,53 @@ process build_carveme {
 }
 
 process build_gapseq {
-  cpus 1
+  cpus 3
+  publishDir "${params.data_dir}/gapseq_draft"
+  input:
+  tuple val(id), val(domain), path(assembly)
+
+  output:
+  tuple val("${id}"), path("${id}-draft.RDS"), path("${id}-rxnWeights.RDS"), path("${id}-rxnXgenes.RDS")
+
+  """
+    gapseq find -O -p all -k -v 1 -t ${domain} ${assembly} > ${id}.log || true
+    grep "Running time:" ${id}.log || exit 1
+
+    gapseq find-transport -k -v 1 ${assembly} > ${id}.log || true
+    grep "Running time:" ${id}.log || exit 1
+
+    gapseq draft \
+      -r ${id}-all-Reactions.tbl \
+      -t ${id}-Transporter.tbl \
+      -c ${assembly} \
+      -b ${domain == 'Archaea' ? 'archaea' : 'auto'} \
+      -u ${params.gapseq_good_score} \
+      -l ${params.gapseq_bad_score} \
+      -p ${id}-all-Pathways.tbl
+  """
+}
+
+process gapfill_gapseq {
+  cpus 3
   publishDir "${params.data_dir}/gapseq_models", mode: "copy", overwrite: true
 
   input:
-  tuple val(id), path(assembly)
+  tuple val(id), path(draft), path(weights), path(rxnXgenes)
 
   output:
-  tuple val("${id}"), path("${id}.xml.gz"), path("${id}.log")
+  tuple val(id), path("${id}.xml.gz"), path("${id}.log")
 
   script:
   if (params.media_db)
     """
     cp ${baseDir}/${params.media_db} medium.csv
-    gapseq doall ${assembly} medium.csv > ${id}.log
+    gapseq fill -m ${draft} -n medium.csv -c ${weights} -b ${params.gapseq_bad_score} -g ${rxnXgenes} > ${id}.log
     gzip ${id}.xml
     """
   else
     """
-    gapseq doall ${assembly} /opt/gapseq/dat/media/gut.csv > ${id}.log
+    cp /opt/gapseq/dat/media/gut.csv medium.csv
+    gapseq fill -m ${draft} -n medium.csv -c ${weights} -b ${params.gapseq_bad_score} -g ${rxnXgenes} > ${id}.log
     gzip ${id}.xml
     """
 }
@@ -262,11 +278,9 @@ process summarize_fba {
 
 workflow {
   Channel
-    .fromPath([
-        "${params.data_dir}/raw/*.fna",
-        "${params.data_dir}/raw/*.fasta"
-    ])
-    .map{row -> tuple(row.baseName.split("\\.f")[0], tuple(row))}
+    .fromPath("${params.genomes}")
+    .splitCsv(header: true)
+    .map{row -> tuple(row.id, row.lineage ==~ "d__Archaea" ? "Archaea" : "Bacteria", row.assembly)}
     .set{genomes}
 
   def models = null
@@ -275,14 +289,16 @@ workflow {
     find_genes(genomes)
     build_carveme(find_genes.out.combine(init_db.out))
     models = build_carveme.out
-    models | carveme_fba
-    exchanges = carveme_fba.out.map{it -> it[1]}.collect()
-    rates = carveme_fba.out.map{it -> it[2]}.collect()
-    summarize_fba(exchanges, rates)
-    checkm(find_genes.out.map{prots -> prots[2]}.collect())
+
+    if (params.simulate) {
+      models | carveme_fba
+      exchanges = carveme_fba.out.map{it -> it[1]}.collect()
+      rates = carveme_fba.out.map{it -> it[2]}.collect()
+      summarize_fba(exchanges, rates)
+    }
   } else if (params.method == "gapseq") {
-    build_gapseq(genomes)
-    models = build_gapseq.out
+    build_gapseq(genomes) | gapfill_gapseq
+    models = gapfill_gapseq.out
   } else {
     error "Method must be either `carveme` or `gapseq`."
   }
