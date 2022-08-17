@@ -329,46 +329,6 @@ process transcript_index {
     """
 }
 
-process transcript_align {
-    cpus 4
-    publishDir "${params.data_dir}/txn_aligned"
-
-    input:
-    tuple val(id), path(reads), path(json), path(html), path(index)
-
-    output:
-    tuple val(id), path("${id}.bam")
-
-    script:
-    if (params.single_end)
-        """
-        bowtie2 -k 10 -p ${task.cpus} --mm --no-unal \
-            -x ${index}/txns -U ${reads} | \
-            samtools view -bS - -o ${id}.bam
-        """
-    else
-        """
-        bowtie2 -k 10 -p ${task.cpus} --mm --no-unal \
-            -x ${index}/txns -1 ${reads[0]} -2 ${reads[1]} | \
-            samtools view -bS - -o ${id}.bam
-        """
-}
-
-process em_count {
-    cpus 8
-
-    input:
-    tuple val(id), path(bam), path(genes)
-
-    output:
-    path("${id}.sf")
-
-    """
-    salmon quant -p ${task.cpus} -l SF -t ${genes} -a ${bam} -o ${id} &&
-        mv ${id}/quant.sf ${id}.sf
-    """
-}
-
 process map_and_count {
     cpus 8
 
@@ -465,52 +425,6 @@ process contig_align {
     """
 }
 
-process replication_rates {
-    cpus 8
-    publishDir "${params.data_dir}/replication_rates"
-
-    input:
-    tuple val(id), path(bam)
-
-    output:
-    path("${id}.csv")
-
-    """
-    #!/usr/bin/env Rscript
-
-    library(mbtools)
-    library(futile.logger)
-
-    flog.threshold(DEBUG)
-    alns <- data.table(id=${id}, alignment=${bam}, success=TRUE)
-
-    co <- bin_coverage(alns, threads=${task.cpus})
-    rates <- replication_rates(co, threads=${task.cpus}, min_points_fit=40)
-    fwrite(rates[["rate"]], "${id}.csv")
-    """
-}
-
-process merge_rates {
-    cpus 1
-    publishDir "${params.data_dir}", mode: "copy", overwrite: true
-
-    input:
-    path(rates)
-
-    output:
-    path("replication_rates.csv")
-
-    """
-    #!/usr/bin/env Rscript
-
-    library(data.table)
-
-    files <- strsplit("${rates}", " ")[[1]]
-    rates <- rbindlist(lapply(files, fread))
-    fwrite(files, "replication_rates.csv")
-    """
-}
-
 workflow {
     // find files
     if (params.single_end) {
@@ -557,7 +471,6 @@ workflow {
     // count gene abundances and annotate the genes
     transcript_index(cluster_transcripts.out)
     preprocess.out.combine(transcript_index.out) | map_and_count
-    // em_count(transcript_align.out.combine(cluster_transcripts.out))
     merge_counts(map_and_count.out.collect())
     annotate(filter_proteins.out)
 }
