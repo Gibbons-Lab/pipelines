@@ -1,6 +1,6 @@
 params.trim_left = 0
-params.trunc_forward = 150
-params.trunc_reverse = 150
+params.trunc_forward = 240
+params.trunc_reverse = 230
 params.maxEE = 2
 params.merge = true
 params.min_overlap = 8
@@ -16,7 +16,7 @@ process quality_control {
     cpus params.threads
 
     output:
-    tuple path("manifest.csv"), path("qc.rds"), path("qualities.png")
+    tuple path("manifest.csv"), path("qc.rds"), path("*.png")
 
     """
     #!/usr/bin/env Rscript
@@ -38,6 +38,10 @@ process quality_control {
     qc <- quality_control(files, min_score = 20)
     saveRDS(qc, "qc.rds")
     ggsave("qualities.png", pl = qc[["quality_plot"]] + theme_minimal(),
+           width = 8, height = 4, dpi = 300)
+    ggsave("entropy.png", pl = qc[["entropy_plot"]] + theme_minimal(),
+           width = 8, height = 4, dpi = 300)
+    ggsave("lengths.png", pl = qc[["length_plot"]] + theme_minimal(),
            width = 8, height = 4, dpi = 300)
     """
 }
@@ -78,15 +82,14 @@ process trim {
 }
 
 process denoise {
-    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+    publishDir "${params.data_dir}/denoise"
     cpus params.threads
 
     input:
     tuple path(procced), path(artifact)
 
     output:
-    tuple path("phyloseq.rds"), path("read_stats.csv"),
-          path("denoised.rds")
+    tuple path("read_stats.csv"), path("denoised.rds"), path("phyloseq.rds")
 
     """
     #!/usr/bin/env Rscript
@@ -111,6 +114,59 @@ process denoise {
     saveRDS(ps, "phyloseq.rds")
     """
 }
+
+process tree {
+    publishDir "${params.data_dir}", mode: 'copy', overwrite: true
+
+    cpus params.threads
+
+    input:
+    tuple path(stats), path(denoised), path(ps)
+
+    output:
+    tuple path("asvs.tree"), path("phyloseq.rds")
+
+    """
+    #!/usr/bin/env Rscript
+
+    library(futile.logger)
+    library(mbtools)
+
+    denoised <- readRDS("${denoised}")
+
+    seqs <- denoised[["taxonomy"]][, "sequence"]
+    alignments <- DECIPHER::AlignSeqs(
+        Biostrings::DNAStringSet(seqs),
+        anchor = NA,
+        processors = ${task.cpus}
+    )
+
+    am <- as(alignments, "matrix")
+    freqs <- t(apply(am, 2, function(x)
+        table(factor(x, levels = c("-", "A", "C", "G", "T"))) / length(x)))
+    absent <- freqs[, "-"] > 0.5
+    flog.info(paste("%d alignment columns are absent in >50%% of alignments,",
+                    "removing them."), sum(absent))
+    alignments <- am[, !absent] %>% apply(1, paste0, collapse = "") %>%
+                  Biostrings::DNAStringSet()
+    flog.info("Final alignment has %d positions. Starting FastTree...",
+              width(alignments)[1])
+    Biostrings::writeXStringSet(alignments, "asvs_aligned.fna")
+    args <- c("-fastest", "-gtr", "-gamma",
+              "-nt", "asvs_aligned.fna", ">", "asvs.tree")
+    out <- system2("FastTreeMP",
+                   args = args,
+                   env = "OMP_NUM_THREADS=${task.cpus}"
+            )
+    tree <- read_tree("asvs.tree")
+
+    ps <- as_phyloseq(denoised, sdata)
+    phy_tree(ps) <- tree
+
+    saveRDS(ps, "phyloseq.rds")
+    """
+}
+
 
 process tables {
     publishDir "${params.data_dir}", mode: "copy", overwrite: true
@@ -140,4 +196,5 @@ process tables {
 
 workflow {
     quality_control | trim | denoise | tables
+    denoise.output | tree
 }
