@@ -374,7 +374,7 @@ process merge_counts {
     with gzip.open("function_counts.csv.gz", "ab") as gzf:
         for i, p in enumerate(paths):
             sample = path.splitext(path.basename(p))[0]
-            loggy.info("Processing sample {}...", sample)
+            print("Processing sample {sample}...")
             try:
                 counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
             except Exception:

@@ -160,7 +160,7 @@ process tree {
             )
     tree <- read_tree("asvs.tree")
 
-    ps <- as_phyloseq(denoised, sdata)
+    ps <- readRDS("${ps}")
     phy_tree(ps) <- tree
 
     saveRDS(ps, "phyloseq.rds")
@@ -173,7 +173,7 @@ process tables {
     cpus 1
 
     input:
-    tuple path(ps), path(stats), path(arti)
+    tuple path(stats), path(arti), path(ps)
 
     output:
     tuple path("asvs.csv"), path("taxonomy.csv")
