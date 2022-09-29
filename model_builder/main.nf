@@ -121,6 +121,8 @@ process build_carveme {
 process build_gapseq {
   cpus 3
   publishDir "${params.data_dir}/gapseq_draft"
+  errorStrategy 'ignore'
+
   input:
   tuple val(id), val(domain), path(assembly)
 
