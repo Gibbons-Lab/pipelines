@@ -305,15 +305,16 @@ process filter_proteins {
 
     os.system("cat ${proteins} > merged.faa")
     print("Reading transcript indices...")
-    transcript_idx = set(SeqIO.index("{transcripts}", "fasta"))
+    transcripts_idx = set(SeqIO.index("${transcripts}", "fasta"))
     print("Reading protein indices...")
     proteins = SeqIO.index("merged.faa", "fasta")
-    matched = transcripts_idx.intersect(set(proteins))
+    print("Writing filtered proteins...")
     with open("proteins.faa", "wb") as out:
-        for i, id in enumerate(matched, start=1):
-            SeqIO.write(proteins.get_raw(id), out, "fasta")
+        for i, id in enumerate(transcripts_idx, start=1):
+            out.write(proteins.get_raw(id))
             if (i % 100000) == 0:
-                print(f"Processed {i*100000} proteins.")
+                print(f"Processed {i} proteins.")
+    os.system("rm merged.faa")
     """
 }
 
