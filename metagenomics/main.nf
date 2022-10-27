@@ -17,6 +17,7 @@ params.contig_length = 500
 params.overlap = 0.8
 params.identity = 0.99
 params.threads = 12
+params.ranks = "D,P,G,S"
 
 def helpMessage() {
     log.info"""
@@ -60,7 +61,7 @@ if (params.help) {
 }
 
 Channel
-    .fromList(["D", "P", "G", "S"])
+    .of(params.ranks.split(","))
     .set{levels}
 
 process preprocess {
@@ -128,7 +129,8 @@ process count_taxa {
     tuple val(id), val(lev), path("${lev}/${id}.b2"), path("${lev}/${id}_bracken_mpa.tsv")
 
     """
-    mkdir ${lev} && cp ${report} ${lev}/${report} && \
+    mkdir ${lev} && \
+        sed 's/\\tR1\\t/\\tD\\t/g' ${report} > ${lev}/${report} && \
         bracken -d ${params.kraken2_db} -i ${lev}/${report} \
         -l ${lev} -o ${lev}/${id}.b2 -r ${params.read_length} \
         -t ${params.threshold} -w ${lev}/${id}_bracken.tsv && \
@@ -167,7 +169,7 @@ process merge_taxonomy {
 
     def str_to_taxa(taxon):
         taxon = taxon.split("|")
-        taxa = pd.Series({ranks[t.split("_")[0]]: t.split("_")[1] for t in taxon})
+        taxa = pd.Series({ranks[t.split("_", 1)[0]]: t.split("_", 1)[1] for t in taxon})
         return taxa
 
     read = []
@@ -232,23 +234,6 @@ process megahit {
         """
 }
 
-process cluster_contigs {
-    cpus params.threads
-    publishDir "${params.data_dir}", mode: "copy", overwrite: true
-
-    input:
-    path(assemblies)
-
-    output:
-    path("all_contigs.fna")
-
-    """
-    cat ${assemblies} > merged.fna
-    mmseqs easy-linclust merged.fna contigs tmp --cov-mode 0 -c ${params.overlap} --min-seq-id ${params.identity} --threads ${task.cpus}
-    mv contigs_rep_seq.fasta all_contigs.fna
-    """
-}
-
 process find_genes {
     cpus 1
     publishDir "${params.data_dir}/genes"
@@ -280,8 +265,11 @@ process cluster_transcripts {
     path("transcripts.fna")
 
     """
-    cat ${transcripts} > merged.fna
-    mmseqs easy-linclust merged.fna transcripts tmp --cov-mode 0 -c ${params.overlap} --min-seq-id ${params.identity} --threads ${task.cpus}
+    mmseqs easy-linclust ${transcripts} transcripts tmp \
+        --cov-mode 0 -c ${params.overlap} \
+        --min-seq-id ${params.identity} \
+        --split-memory-limit 64G --threads ${task.cpus}
+    rm transcripts_all_seqs.fna
     mv transcripts_rep_seq.fasta transcripts.fna
     """
 }
@@ -404,12 +392,11 @@ process annotate {
     path("proteins.emapper.annotations")
 
     """
-    rm -rf /tmp/eggnog_results
-    mkdir /tmp/eggnog_results
+    TMP=\$(mktemp -d -t eggnog_results_XXXXXXXXXX)
     emapper.py -i ${proteins} --output proteins -m diamond \
-        --data_dir ${params.eggnog_refs} --scratch_dir /tmp/eggnog_results --temp_dir /tmp \
+        --data_dir ${params.eggnog_refs} --scratch_dir \$TMP --temp_dir /tmp \
         --cpu ${task.cpus}
-    rm -rf /tmp/eggnog_results
+    rm -rf \$TMP
     """
 }
 
@@ -463,7 +450,7 @@ workflow {
 
     // assemble de novo
     megahit(preprocess.out)
-    cluster_contigs(megahit.out.map{sample -> sample[1]}.collect())
+    //cluster_contigs(megahit.out.map{sample -> sample[1]}.collect())
 
     // find ORFs and collapse on 99% ANI
     find_genes(megahit.out)
