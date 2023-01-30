@@ -242,7 +242,7 @@ process find_genes {
     tuple val(id), path(assembly)
 
     output:
-    tuple path("${id}.ffn"), path("${id}.faa")
+    tuple val(id), path("${id}.ffn"), path("${id}.faa")
 
     """
     if grep -q ">" ${assembly}; then
@@ -254,78 +254,31 @@ process find_genes {
     """
 }
 
-process cluster_transcripts {
+process cluster_proteins {
     cpus params.threads/2
     publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
-    path(transcripts)
-
-    output:
-    path("transcripts.fna")
-
-    """
-    mmseqs easy-linclust ${transcripts} transcripts tmp \
-        --cov-mode 0 -c ${params.overlap} \
-        --min-seq-id ${params.identity} \
-        --split-memory-limit 64G --threads ${task.cpus}
-    rm transcripts_all_seqs.fna
-    mv transcripts_rep_seq.fasta transcripts.fna
-    """
-}
-
-process filter_proteins {
-    cpus 1
-    publishDir "${params.data_dir}", mode: "copy", overwrite: true
-
-    input:
-    path(transcripts)
     path(proteins)
 
     output:
-    path("proteins.faa")
+    tuple path("proteins.faa"), path("proteins_cluster.tsv")
 
     """
-    #!/usr/bin/env python
-
-    from Bio import SeqIO
-    import os
-
-    os.system("cat ${proteins} > merged.faa")
-    print("Reading transcript indices...")
-    transcripts_idx = set(SeqIO.index("${transcripts}", "fasta"))
-    print("Reading protein indices...")
-    proteins = SeqIO.index("merged.faa", "fasta")
-    print("Writing filtered proteins...")
-    with open("proteins.faa", "wb") as out:
-        for i, id in enumerate(transcripts_idx, start=1):
-            out.write(proteins.get_raw(id))
-            if (i % 100000) == 0:
-                print(f"Processed {i} proteins.")
-    os.system("rm merged.faa")
-    """
-}
-
-process transcript_index {
-    cpus params.threads
-    publishDir "${params.data_dir}/"
-
-    input:
-    path(txns)
-
-    output:
-    path("txn_salmon_index")
-
-    """
-    salmon index -p ${task.cpus} -t ${txns} -i txn_salmon_index
+    mmseqs easy-linclust ${proteins} proteins tmp \
+        --cov-mode 0 -c ${params.overlap} \
+        --min-seq-id ${params.identity} \
+        --split-memory-limit 128G --threads ${task.cpus}
+    rm -rf proteins_all_seqs.fna tmp
+    mv proteins_rep_seq.fasta proteins.faa
     """
 }
 
 process map_and_count {
-    cpus 8
+    cpus 2
 
     input:
-    tuple val(id), path(reads), path(json), path(html), path(index)
+    tuple val(id), path(reads), path(json), path(html), path(genes), path(proteins)
 
     output:
     path("${id}.sf")
@@ -333,13 +286,17 @@ process map_and_count {
     script:
     if (params.single_end)
         """
-        salmon quant --meta -p ${task.cpus} -l A -i ${index} -r ${reads} -o ${id} &&
+        salmon index -p ${task.cpus} -t ${genes} -i ${id}_index
+        salmon quant --meta -p ${task.cpus} -l A -i ${id}_index -r ${reads} -o ${id} &&
             mv ${id}/quant.sf ${id}.sf || touch ${id}.sf
+        rm -rf ${id}_index
         """
     else
         """
-        salmon quant --meta -p ${task.cpus} -l A -i ${index} -1 ${reads[0]} -2 ${reads[1]} -o ${id} &&
+        salmon index -p ${task.cpus} -t ${genes} -i ${id}_index
+        salmon quant --meta -p ${task.cpus} -l A -i ${id}_index -1 ${reads[0]} -2 ${reads[1]} -o ${id} &&
             mv ${id}/quant.sf ${id}.sf || touch ${id}.sf
+        rm -rf ${id}_index
         """
 }
 
@@ -351,7 +308,7 @@ process merge_counts {
     path(salmon_quants)
 
     output:
-    path("function_counts.csv.gz")
+    path("gene_counts.csv.gz")
 
     """
     #!/usr/bin/env python
@@ -363,7 +320,7 @@ process merge_counts {
 
     paths = "${salmon_quants}"
     paths = paths.split(" ")
-    with gzip.open("function_counts.csv.gz", "ab") as gzf:
+    with gzip.open("gene_counts.csv.gz", "ab") as gzf:
         for i, p in enumerate(paths):
             sample = path.splitext(path.basename(p))[0]
             print("Processing sample {sample}...")
@@ -381,12 +338,38 @@ process merge_counts {
     """
 }
 
+process cluster_counts {
+    cpus 1
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+    input:
+    path(gene_counts)
+    tuple path(proteins), path(clusters)
+
+    output:
+    path("cluster_counts.csv.gz")
+
+    """
+    #!/usr/bin/env python
+
+    import pandas as pd
+
+    counts = pd.read_csv("${gene_counts}")
+    clusters = pd.read_csv("${clusters}", sep="\t")
+    clusters.columns = ["representative", "contig"]
+    clusters.set_index("contig", inplace=True)
+    counts["cluster"] = clusters.representative[counts.locus_tag]
+    collapsed = counts.groupby("cluster").agg({"tpm": "sum", "reads": "sum"}).reset_index()
+    collapsed.to_csv("cluster_counts.csv.gz", index=False)
+    """
+}
+
 process annotate {
     cpus params.threads
     publishDir "${params.data_dir}", mode: "copy", overwrite: true
 
     input:
-    path(proteins)
+    tuple path(proteins), path(clusters)
 
     output:
     path("proteins.emapper.annotations")
@@ -397,22 +380,6 @@ process annotate {
         --data_dir ${params.eggnog_refs} --scratch_dir \$TMP --temp_dir /tmp \
         --cpu ${task.cpus}
     rm -rf \$TMP
-    """
-}
-
-process contig_align {
-    cpus 4
-    publishDir "${params.data_dir}/contig_aligned"
-
-    input:
-    tuple val(id), path(reads), path(json), path(html), path(contigs)
-
-    output:
-    tuple val(id), path("${id}.bam")
-
-    """
-    minimap2 -acx sr -t ${task.cpus} ${contigs} ${reads} | \
-    samtools view -bS - -o ${id}.bam
     """
 }
 
@@ -450,18 +417,14 @@ workflow {
 
     // assemble de novo
     megahit(preprocess.out)
-    //cluster_contigs(megahit.out.map{sample -> sample[1]}.collect())
 
-    // find ORFs and collapse on 99% ANI
+    // find ORFs and count them
     find_genes(megahit.out)
-    find_genes.out.map{sample -> sample[0]}.collect().set{transcripts}
-    find_genes.out.map{sample -> sample[1]}.collect().set{proteins}
-    cluster_transcripts(transcripts)
-    filter_proteins(cluster_transcripts.out, proteins)
-
-    // count gene abundances and annotate the genes
-    transcript_index(cluster_transcripts.out)
-    preprocess.out.combine(transcript_index.out) | map_and_count
+    preprocess.out.combine(find_genes.out, by: 0) | map_and_count
     merge_counts(map_and_count.out.collect())
-    annotate(filter_proteins.out)
+
+    // cluster proteins, collapse mapping counts, and annotate clusters
+    find_genes.out.map{sample -> sample[2]}.collect() | cluster_proteins
+    cluster_counts(merge_counts.out, cluster_proteins.out)
+    annotate(cluster_proteins.out)
 }

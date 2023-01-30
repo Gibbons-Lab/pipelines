@@ -1,6 +1,7 @@
 nextflow.enable.dsl=2
 
 params.reference = "reference.fna"
+params.decoy = "decoy.fna"
 params.single_end = false
 params.trim_front = 5
 params.min_length = 50
@@ -78,13 +79,15 @@ process build_index {
 
     input:
     path(ref)
+    path(decoy)
 
     output:
     path("reference_index")
 
     """
+    mkdir genomes && cp ${ref} ${decoy} genomes
     mkdir reference_index
-    coptr index --bt2-threads ${task.cpus} ${ref} reference_index/index
+    coptr index --bt2-threads ${task.cpus} genomes reference_index/index
     """
 }
 
@@ -180,6 +183,35 @@ process estimate_ptr {
   """
 }
 
+process count_reads {
+  cpus 1
+  publishDir "${baseDir}/data",  mode: "copy", overwrite: true
+
+  input:
+  path(coverage)
+
+  output:
+  path("reference_counts.csv")
+
+  """
+  #!/usr/bin/env python
+
+  import pickle
+  import pandas as pd
+
+  files = "${coverage}".split()
+  counts = []
+  for f in files:
+    print(f"Processing coverage profile {f}...")
+    cov = pickle.load(open(f, "rb"))
+    c = pd.Series({id: c.count_reads() for id, c in cov.items()})
+    c["sample_id"] = f.split(".cm.pkl")[0]
+    counts.append(c)
+  counts = pd.DataFrame.from_records(counts)
+  counts.to_csv("reference_counts.csv", index=False)
+  """
+}
+
 workflow {
 // find files
     if (params.single_end) {
@@ -203,7 +235,11 @@ workflow {
         .fromPath("${baseDir}/data/${params.reference}")
         .ifEmpty { error "Cannot find the reference in ${baseDir}/data!" }
         .set{ref}
-    ref | build_index
+    Channel
+        .fromPath("${baseDir}/data/${params.decoy}")
+        .ifEmpty { error "Cannot find the decoy in ${baseDir}/data!" }
+        .set{decoy}
+    build_index(ref, decoy)
     reads | preprocess
     map_reads(preprocess.out, build_index.out) | alignment_stats
 
@@ -214,4 +250,5 @@ workflow {
 
     map_reads.out | extract_coverage
     estimate_ptr(extract_coverage.out.collect())
+    extract_coverage.out.collect() | count_reads
 }
