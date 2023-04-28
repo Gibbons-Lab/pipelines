@@ -5,113 +5,93 @@ nextflow.enable.dsl = 2
 params.data_dir = "${baseDir}/data"
 params.single_end = false
 params.min_contig_length = 5000
+params.gtdb = "/proj/gibbons/refs/gtdb"
+params.checkm = "/proj/gibbonsrefs/checkm2"
 
 maxcpus = 24
 
-process bin_align {
-    cpus maxcpus
+process contig_align {
+    cpus 8
 
     input:
-    tuple val(id), file(reads)
-    path(assembly)
+    tuple val(id), path(contigs), path(reads)
 
     output:
-    path("${id}.bam")
+    tuple val(id), path("${id}.bam"), path("${id}.bai")
 
     """
-    minimap2 -ax sr -N 100 -t ${task.cpus} ${assembly} ${reads} | \
+    minimap2 -ax sr -N 100 -t ${task.cpus} ${contigs} ${reads} | \
     samtools sort -@${task.cpus} -o ${id}.bam && \
     samtools index ${id}.bam ${id}.bai
     """
 }
 
-process bin {
-    cpus maxcpus
+process coverage {
+    cpus 1
     publishDir "${params.data_dir}"
 
     input:
-    path(bam_files)
-    path(assembly)
+    tuple val(id), path(bam), path(bai)
 
     output:
-    path("metabat2_bins")
+    tuple val(id), path("${id}_coverage.txt")
 
     """
-    jgi_summarize_bam_contig_depths --outputDepth depth.txt ${bam_files} && \
-    metabat2 -i ${assembly} -a depth.txt -o metabat2_bins/bin \
-        -t ${task.cpus} -m 2500 -s 100000
+    jgi_summarize_bam_contig_depths --outputDepth ${id}_coverage.txt ${bam}
     """
 }
 
-process build_database {
-    cpus maxcpus
-    publishDir "${params.data_dir}/refs"
-
-    output:
-    tuple path("CAT_database"), path("CAT_taxonomy")
-
-    """
-    CAT prepare --fresh -d CAT_database -t CAT_taxonomy -n ${task.cpus}
-    """
-}
-
-process filter_contigs {
-    cpus 1
-    publishDir "${params.data_dir}/assembled/contigs"
+process metabat {
+    cpus 8
+    publishDir "${params.data_dir}"
 
     input:
-    path(contigs)
+    tuple val(id), path(contigs), path(coverage)
 
     output:
-    path("long_contigs.fna")
+    tuple val(id), path("bins/${id}_*.fa.gz")
 
     """
-    #!/usr/bin/env Rscript
-
-    library(Biostrings)
-
-    contigs <- readDNAStringSet("${contigs}")
-    writeXStringSet(contigs[width(contigs) > ${params.min_contig_length}], "long_contigs.fna")
+    metabat2 -i ${contigs} -a ${coverage} -o bins/${id}_ \
+        -t ${task.cpus} -m 2500 -s 100000
+    pigz -p ${task.cpus} bins/*.fa
     """
 }
 
-process bin_taxonomy {
-    cpus maxcpus
+process checkm {
+    cpus params.threads
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+    input:
+    path(bins)
+
+    output:
+    path("checkm")
+
+    """
+    checkm2 predict --threads ${task.cpus} --input bins --output-directory checkm
+    """
+}
+
+process gtdb_classify {
+    cpus params.threads
+
     publishDir "${params.data_dir}"
 
     input:
     path(bins)
-    tuple path(database_folder), path(taxonomy_folder)
 
     output:
-    path("bins.classification.names.txt")
+    path("gtdb")
 
     """
-    CAT bins -r 10 -f 0.1 -b ${bins} -s .fa -d ${database_folder} \
-        -t ${taxonomy_folder} -o bins -n ${task.cpus} && \
-    CAT add_names -i bins.bin2classification.txt -o bins.classification.names.txt -t ${taxonomy_folder}
+    GTDBTK_DATA_PATH=${params.gtdb} gtdbtk classify_wf \
+        --genome_dir bins/ --prefix bins \
+        --cpus ${task.cpus} --out_dir gtdb
     """
+
 }
 
-process contig_taxonomy {
-    cpus maxcpus
-    publishDir "${params.data_dir}"
-
-    input:
-    path(contigs)
-    tuple path(database_folder), path(taxonomy_folder)
-
-    output:
-    tuple path("contigs.classification.names.txt"), path("contigs.summary.txt")
-
-    """
-    CAT contigs -c ${contigs} -d ${database_folder} -t ${taxonomy_folder} \
-        -n ${task.cpus} --out_prefix contigs && \
-    CAT add_names -i contigs.contig2classification.txt -o contigs.classification.names.txt \
-        -t ${taxonomy_folder} --only_official && \
-    CAT summarise -c ${contigs} -i contigs.classification.names.txt -o contigs.summary.txt
-    """
-}
 
 workflow {
     if (params.single_end) {
@@ -129,12 +109,16 @@ workflow {
             .set{reads}
     }
 
-    Channel.from("${params.data_dir}/assembled/contigs/final.contigs.fa").set{assembly}
+    Channel.
+        fromPath("${params.data_dir}/assembled/contigs/*.fa")
+        .map{row -> tuple(row.baseName.split("\\.contigs\\.fa")[0], row)}
+        .set{assemblies}
 
-    dbs = build_database()
+    contig_align(assemblies.join(reads)) | coverage
+    binned = metabat(assemblies.join(coverage.out))
+    all_bins = binned.out.map{it -> it[1]}.collect()
+    checkm(all_bins)
+    gtdb_classify(all_bins)
 
-    aligned = bin_align(reads, assembly)
-    binned = bin(aligned.collect(), assembly)
-    bin_classified = bin_taxonomy(binned, dbs)
     contig_classified = contig_taxonomy(filter_contigs(assembly), dbs)
 }

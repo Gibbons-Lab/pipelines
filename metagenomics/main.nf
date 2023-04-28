@@ -3,9 +3,10 @@
 nextflow.enable.dsl = 2
 
 params.data_dir = "${baseDir}/data"
+params.raw_data = "raw"
 params.refs = "${baseDir}/refs"
 params.eggnog_refs = "${params.refs}/eggnog"
-params.kraken2_db = "${params.refs}/kraken2_default"
+params.kraken2_db = "${params.refs}/kraken2_db_uhgg_v2.0.1"
 
 params.single_end = false
 params.trim_front = 5
@@ -17,6 +18,7 @@ params.contig_length = 500
 params.overlap = 0.8
 params.identity = 0.99
 params.threads = 12
+params.confidence = 0.3
 params.ranks = "D,P,G,S"
 
 def helpMessage() {
@@ -80,7 +82,8 @@ process preprocess {
         fastp -i ${reads[0]} -o ${id}_filtered_R1.fastq.gz \
             --json ${id}_fastp.json --html ${id}.html \
             --trim_front1 ${params.trim_front} -l ${params.min_length} \
-            -3 -M ${params.quality_threshold} -r -w ${task.cpus}
+            -3 -M ${params.quality_threshold} -r -w ${task.cpus} \
+            --max_len1 ${params.read_length}
         """
 
     else
@@ -89,7 +92,8 @@ process preprocess {
             -o ${id}_filtered_R1.fastq.gz -O ${id}_filtered_R2.fastq.gz\
             --json ${id}_fastp.json --html ${id}.html \
             --trim_front1 ${params.trim_front} -l ${params.min_length} \
-            -3 -M ${params.quality_threshold} -r -w ${task.cpus}
+            -3 -M ${params.quality_threshold} -r -w ${task.cpus} \
+            --max_len1 ${params.read_length} --max_len2 ${params.read_length}
         """
 }
 
@@ -107,6 +111,7 @@ process kraken {
     if (params.single_end)
         """
         kraken2 --db ${params.kraken2_db} \
+            --confidence ${params.confidence} \
             --threads ${task.cpus} --gzip-compressed --output ${id}.k2 \
             --memory-mapping --report ${id}.tsv ${reads}
         """
@@ -114,6 +119,7 @@ process kraken {
     else
         """
         kraken2 --db ${params.kraken2_db} --paired \
+            --confidence ${params.confidence} \
             --threads ${task.cpus} --gzip-compressed --output ${id}.k2 \
             --memory-mapping --report ${id}.tsv  ${reads[0]} ${reads[1]}
         """
@@ -286,14 +292,14 @@ process map_and_count {
     script:
     if (params.single_end)
         """
-        salmon index -p ${task.cpus} -t ${genes} -i ${id}_index
+        salmon index -p ${task.cpus} -t ${genes} -i ${id}_index || touch ${id}_index
         salmon quant --meta -p ${task.cpus} -l A -i ${id}_index -r ${reads} -o ${id} &&
             mv ${id}/quant.sf ${id}.sf || touch ${id}.sf
         rm -rf ${id}_index
         """
     else
         """
-        salmon index -p ${task.cpus} -t ${genes} -i ${id}_index
+        salmon index -p ${task.cpus} -t ${genes} -i ${id}_index || touch ${id}_index
         salmon quant --meta -p ${task.cpus} -l A -i ${id}_index -1 ${reads[0]} -2 ${reads[1]} -o ${id} &&
             mv ${id}/quant.sf ${id}.sf || touch ${id}.sf
         rm -rf ${id}_index
@@ -358,8 +364,16 @@ process cluster_counts {
     clusters = pd.read_csv("${clusters}", sep="\t")
     clusters.columns = ["representative", "contig"]
     clusters.set_index("contig", inplace=True)
-    counts["cluster"] = clusters.representative[counts.locus_tag]
-    collapsed = counts.groupby("cluster").agg({"tpm": "sum", "reads": "sum"}).reset_index()
+    found = counts.locus_tag.isin(clusters.index)
+    if (~found).any():
+        not_clustered = counts.locus_tag[~found].unique()
+        print(
+            f"The following {len(not_clustered)} genes were omitted"
+            f" because they were only observed once: {', '.join(not_clustered)}"
+        )
+        counts = counts[found]
+    counts["cluster"] = clusters.representative[counts.locus_tag].values
+    collapsed = counts.groupby(["sample_id", "cluster"]).agg({"tpm": "sum", "reads": "sum"}).reset_index()
     collapsed.to_csv("cluster_counts.csv.gz", index=False)
     """
 }
@@ -387,7 +401,7 @@ workflow {
     // find files
     if (params.single_end) {
         Channel
-            .fromPath("${params.data_dir}/raw/*.fastq.gz")
+            .fromPath("${params.data_dir}/${params.raw_data}/*.fastq.gz")
             .map{row -> tuple(row.baseName.split("\\.fastq")[0], tuple(row))}
             .set{raw}
     } else {
@@ -397,7 +411,7 @@ workflow {
                 "${params.data_dir}/raw/*_{1,2}.fastq.gz",
                 "${params.data_dir}/raw/*_R{1,2}.fastq.gz"
             ])
-            .ifEmpty { error "Cannot find any read files in ${params.data_dir}!" }
+            .ifEmpty { error "Cannot find any read files in ${params.data_dir}/${params.raw_data}!" }
             .set{raw}
     }
 
