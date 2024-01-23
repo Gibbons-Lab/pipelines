@@ -115,7 +115,7 @@ process annotate_ptr {
   import pandas as pd
 
   rates = pd.read_csv("!{rates}")
-  meta = pd.read_csv("http://bit.ly/IGG_species_info_23790", sep="\t")
+  meta = pd.read_csv("https://portal.nersc.gov/cfs/m342/HGM/IGG_species_info_23790.tsv", sep="\t")
   rates.rename(columns={"log2(PTR):genome_id/sample_id": "genome_id"}, inplace=True)
   rates = rates.melt(id_vars="genome_id", var_name="sample_id", value_name="log2_ptr").dropna()
   rates["representative_genome"] = rates.genome_id.str.replace("\\.\\w+$", "", regex=True)

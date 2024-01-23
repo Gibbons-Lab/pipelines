@@ -20,6 +20,7 @@ process quality_control {
 
     """
     #!/usr/bin/env Rscript
+    library(Biostrings)
     library(mbtools)
 
     files <- find_read_files(
@@ -31,7 +32,11 @@ process quality_control {
 
     if (${params.forward_only ? "T" : "F"}) {
         files[, "reverse" := NULL]
+        files <- files[!is.na(forward)]
+    } else {
+        files <- files[!(is.na(forward) | is.na(reverse))]
     }
+
 
     fwrite(files, "manifest.csv")
 

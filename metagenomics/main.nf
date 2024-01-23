@@ -280,6 +280,40 @@ process cluster_proteins {
     """
 }
 
+process filter_transcripts {
+    cpus 1
+    publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+    input:
+    path(transcripts)
+    path(proteins)
+
+    output:
+    path("transcripts.fna.gz")
+
+    """
+    #!/usr/bin/env python
+
+    from Bio import SeqIO
+    import os
+    import gzip
+
+    os.system("cat ${transcripts} > merged.fna")
+    print("Reading transcript indices...")
+    transcripts = SeqIO.index("merged.fna", "fasta")
+    print("Reading protein indices...")
+    proteins_idx = set(SeqIO.index("${proteins}", "fasta"))
+    print("Writing filtered transcripts...")
+
+    with gzip.open("transcripts.fna.gz", "wb") as out:
+        for i, id in enumerate(proteins_idx, start=1):
+            out.write(transcripts.get_raw(id))
+            if (i % 100000) == 0:
+                print(f"Processed {i} proteins.")
+    os.system("rm merged.fna")
+    """
+}
+
 process map_and_count {
     cpus 2
 
@@ -326,20 +360,22 @@ process merge_counts {
 
     paths = "${salmon_quants}"
     paths = paths.split(" ")
+    nread = 0
     with gzip.open("gene_counts.csv.gz", "ab") as gzf:
-        for i, p in enumerate(paths):
+        for p in paths:
             sample = path.splitext(path.basename(p))[0]
             print("Processing sample {sample}...")
             try:
                 counts = pd.read_csv(p, sep="\t").query("NumReads > 0.1")
             except Exception:
                 continue
+            nread += 1
 
             counts.columns = [
                 "locus_tag", "length", "effective_length", "tpm", "reads"]
             counts["sample_id"] = sample
             print(f"writing compressed output for sample {sample}...")
-            counts.to_csv(gzf, header=(i==0),
+            counts.to_csv(gzf, header=(nread==1),
                           index=False)
     """
 }
@@ -439,6 +475,10 @@ workflow {
 
     // cluster proteins, collapse mapping counts, and annotate clusters
     find_genes.out.map{sample -> sample[2]}.collect() | cluster_proteins
+    filter_transcripts(
+        find_genes.out.map{sample -> sample[1]}.collect(),
+        cluster_proteins.out.map{sample -> sample[0]}
+    )
     cluster_counts(merge_counts.out, cluster_proteins.out)
     annotate(cluster_proteins.out)
 }

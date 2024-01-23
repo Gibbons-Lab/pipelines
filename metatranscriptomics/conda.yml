@@ -1,0 +1,24 @@
+name: metagenomics
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.10
+  - nextflow>=20.10.0
+  - fastp
+  - megahit
+  - prodigal
+  - salmon
+  - pandas
+  - samtools
+  - multiqc
+  - biopython
+  - mmseqs2
+  - pip
+  - matplotlib
+  - numpy
+  - scipy
+  - pysam
+  - pip:
+    - eggnog-mapper

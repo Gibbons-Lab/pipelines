@@ -6,11 +6,13 @@ params.genomes = "${baseDir}/data/genomes.csv"
 params.data_dir = "${baseDir}/data"
 params.media_db = null
 params.media = null
+params.scale = 1
 params.method = "carveme"
 params.threads = 12
 params.gapseq_bad_score = 100
 params.gapseq_good_score = 200
 params.simulate = false
+params.db_name = "database"
 
 
 def helpMessage() {
@@ -100,14 +102,15 @@ process build_carveme {
     """
     CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
     carve ${genes_aa} -o ${id}.xml.gz --mediadb ${params.media_db} \
-          --gapfill ${params.media} --diamond-args "-p ${task.cpus}" \
+          --gapfill ${params.media} \
+          --diamond-args "-p ${task.cpus} --more-sensitive --top 10" \
           --fbc2 -v > ${id}.log
     """
   else if (params.media)
     """
     CPX_PARAM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus} \
     carve ${genes_aa} -o ${id}.xml.gz --gapfill ${params.media} \
-          --diamond-args "-p ${task.cpus}" \
+          --diamond-args "-p ${task.cpus} --more-sensitive --top 10" \
           --fbc2 -v > ${id}.log
     """
   else
@@ -230,7 +233,7 @@ process carveme_fba {
     if "reaction" not in media_df.columns:
       media_df["reaction"] = "EX_" + media_df["compound"] + "_e"
     media_df.index = media_df.reaction
-    model.medium = media_df.flux[media_df.index.isin(exids)]
+    model.medium = ${params.scale} * media_df.flux[media_df.index.isin(exids)]
 
   rate = pd.DataFrame({"id": "${id}", "growth_rate": model.slim_optimize()}, index=[0])
   sol = cobra.flux_analysis.pfba(model)
@@ -278,11 +281,44 @@ process summarize_fba {
   """
 }
 
+process model_db {
+  cpus params.threads
+  publishDir "${params.data_dir}", mode: "copy", overwrite: true
+
+  input:
+  path(models)
+
+  output:
+  path("${params.db_name}_gtdb207_strain_1.zip")
+
+  """
+  #!/usr/bin/env python3
+
+  import pandas as pd
+  from micom.workflows import build_database
+
+  manifest = pd.read_csv("${params.genomes}")
+  taxa = manifest.lineage.str.split(";", expand=True)
+  taxa.columns = ["kingdom", "phylum", "class", "order", "family", "genus", "species"]
+  manifest = pd.concat([manifest, taxa], axis=1)
+  manifest["strain"] = manifest.id.str.replace("_", " ")
+  manifest["file"] = manifest.id + ".xml.gz"
+
+  db = build_database(
+    manifest,
+    "${params.db_name}_gtdb207_strain_1.zip",
+    rank="strain",
+    threads=${params.threads}
+  )
+  """
+
+}
+
 workflow {
   Channel
     .fromPath("${params.genomes}")
     .splitCsv(header: true)
-    .map{row -> tuple(row.id, row.lineage ==~ "d__Archaea" ? "Archaea" : "Bacteria", row.assembly)}
+    .map{row -> tuple(row.id, row.lineage ==~ "d__Archaea" ? "Archaea" : "Bacteria", "${params.data_dir}/raw/${row.assembly}")}
     .set{genomes}
 
   def models = null
@@ -306,4 +342,9 @@ workflow {
   }
 
   check_model(models)
+  models
+    .map{it -> it[1]}
+    .collect()
+    .set{all_models}
+  model_db(all_models)
 }
