@@ -19,6 +19,7 @@
 5. Pufferfish mapping index creation (needed for next step)
 6. Gene quantification (mapping + counting) with [salmon](https://salmon.readthedocs.io/en/latest/salmon.html)
 7. Protein annotation using the [EGGNoG mapper](https://github.com/eggnogdb/eggnog-mapper)
+8. Generating kmer-based taxonomic profiles using [Kraken2](https://ccb.jhu.edu/software/kraken2/) and [Bracken](https://ccb.jhu.edu/software/bracken/)
 
 Additional workflows can be run *after* the basic workflow has finished.
 
