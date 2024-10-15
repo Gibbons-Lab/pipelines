@@ -1,6 +1,6 @@
 ## Workflow 
 
-Pipeline takes single or paired end fastq files as input and outputs inferred taxonomy, abundances of species across Domains, and pathway abundances mapped to taxonomy
+This pipeline takes single or paired-end fastq files as input and outputs taxonomic relative abundances
 
 
 1. Adapter and quality trimming with fastp; quality reports in HTML and JSON are provided for each file
