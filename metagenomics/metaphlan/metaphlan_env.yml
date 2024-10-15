@@ -1,0 +1,10 @@
+name: metaphlan
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - metaphlan
+  - nextflow
+  - fastp
+  - multiqc
