@@ -10,7 +10,7 @@ params.mpa_index="mpa_vJun23_CHOCOPhlAnSGB_202403"
 
 params.single_end = false
 params.trim_front = 5
-params.min_length = 50l
+params.min_length = 50
 params.quality_threshold = 20
 params.read_length = 150
 params.threads = 12
