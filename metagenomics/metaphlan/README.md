@@ -25,7 +25,7 @@ Pipeline is designed to run in a Anaconda environment and can be set up using th
 
 1. Create ananconda environment with: 
 
-        conda env create -f metaphlan_env.yml 
+        conda env create -n metaphlan -f metaphlan_env.yml
        
 2. Set up directories for data and reference databases 
     Current set up assumes a format withe the following structure:   
